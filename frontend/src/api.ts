@@ -3,6 +3,11 @@ import { auth } from "./auth-storage";
 
 const API = process.env.EXPO_PUBLIC_BACKEND_URL;
 
+let activeProjectId: string | null = null;
+export function setActiveProjectId(id: string | null) {
+  activeProjectId = id;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, msg: string) {
@@ -18,6 +23,7 @@ async function request(path: string, init: RequestInit = {}) {
     headers.set("Content-Type", "application/json");
   }
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (activeProjectId) headers.set("X-Project-Id", activeProjectId);
   const resp = await fetch(`${API}${path}`, { ...init, headers });
   const text = await resp.text();
   let data: any = null;
@@ -80,10 +86,13 @@ export const api = {
     }
     form.append("catatan", catatan);
     const token = await auth.getToken();
+    const uh: any = {};
+    if (token) uh.Authorization = `Bearer ${token}`;
+    if (activeProjectId) uh["X-Project-Id"] = activeProjectId;
     const resp = await fetch(`${API}/api/units/${blok}/photo`, {
       method: "POST",
       body: form,
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: uh,
     });
     if (!resp.ok) throw new ApiError(resp.status, await resp.text());
     return resp.json();
@@ -101,6 +110,7 @@ export const api = {
     const q = new URLSearchParams({ format: params.format, token: token || "" });
     if (params.month) q.set("month", params.month);
     if (params.marketing) q.set("marketing", params.marketing);
+    if (activeProjectId) q.set("project", activeProjectId);
     return `${API}/api/reports/monthly?${q.toString()}`;
   },
 
@@ -133,9 +143,12 @@ export const api = {
     form.append("jenis", params.jenis);
     form.append("catatan", params.catatan || "");
     const token = await auth.getToken();
+    const uh: any = {};
+    if (token) uh.Authorization = `Bearer ${token}`;
+    if (activeProjectId) uh["X-Project-Id"] = activeProjectId;
     const resp = await fetch(`${API}/api/legality/docs`, {
       method: "POST", body: form,
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: uh,
     });
     if (!resp.ok) {
       let msg = await resp.text();
@@ -154,4 +167,33 @@ export const api = {
     return request(`/api/dashboard${qs ? "?" + qs : ""}`);
   },
   combinedTable: () => request("/api/dashboard/combined-table"),
+
+  // projects (multi-proyek)
+  listProjects: () => request("/api/projects"),
+  createProject: (d: any) => request("/api/projects", { method: "POST", body: JSON.stringify(d) }),
+  updateProject: (id: string, d: any) => request(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(d) }),
+  deleteProject: (id: string) => request(`/api/projects/${id}`, { method: "DELETE" }),
+
+  // marketing dashboard
+  marketingDashboard: (params: { month?: string; marketing?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.month) q.set("month", params.month);
+    if (params.marketing) q.set("marketing", params.marketing);
+    const qs = q.toString();
+    return request(`/api/dashboard/marketing${qs ? "?" + qs : ""}`);
+  },
+
+  // AI
+  aiChat: (d: { message: string; provider: string; session_id?: string; mode?: string }) =>
+    request("/api/ai/chat", { method: "POST", body: JSON.stringify(d) }),
+  aiHistory: (session_id: string) => request(`/api/ai/history?session_id=${encodeURIComponent(session_id)}`),
+  aiImage: (prompt: string) => request("/api/ai/image", { method: "POST", body: JSON.stringify({ prompt }) }),
+
+  // social login + user email
+  googleSession: (session_id: string) =>
+    request("/api/auth/session", { method: "POST", body: JSON.stringify({ session_id }) }),
+  appleLogin: (d: { identity_token: string; email?: string | null; name?: string | null }) =>
+    request("/api/auth/apple", { method: "POST", body: JSON.stringify(d) }),
+  setUserEmail: (u: string, email: string | null) =>
+    request(`/api/users/${u}/email`, { method: "PUT", body: JSON.stringify({ email }) }),
 };

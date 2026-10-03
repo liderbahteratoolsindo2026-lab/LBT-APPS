@@ -13,6 +13,7 @@ import { useAuth, canEdit } from "@/src/auth-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { Badge, statusToKind } from "@/src/badge";
 import { Field, SelectField } from "./kpr";
+import { DateField } from "@/src/components/date-field";
 import { formatDateTime } from "@/src/report-utils";
 
 export default function BangunanScreen() {
@@ -270,9 +271,9 @@ function UnitDetail({ unit, editable, onClose, onSaved }: any) {
               <SelectField label="Tahap Konstruksi" value={form.tahap_konstruksi}
                 options={(stagesQ.data?.items || []).map((i: any) => ({ label: `${i.name} (${i.extra?.percent ?? 0}%)`, value: i.name }))}
                 onChange={(v: any) => setForm({ ...form, tahap_konstruksi: v })} />
-              <Field label="Tanggal Mulai (YYYY-MM-DD)" value={form.tanggal_mulai} onChange={(v: any) => setForm({ ...form, tanggal_mulai: v })} />
-              <Field label="Target Selesai" value={form.tanggal_target_selesai} onChange={(v: any) => setForm({ ...form, tanggal_target_selesai: v })} />
-              <Field label="Realisasi Selesai (opsional)" value={form.tanggal_realisasi_selesai} onChange={(v: any) => setForm({ ...form, tanggal_realisasi_selesai: v })} />
+              <DateField label="Tanggal Mulai" value={form.tanggal_mulai} onChange={(v: any) => setForm({ ...form, tanggal_mulai: v })} />
+              <DateField label="Target Selesai" value={form.tanggal_target_selesai} onChange={(v: any) => setForm({ ...form, tanggal_target_selesai: v })} />
+              <DateField label="Realisasi Selesai (opsional)" value={form.tanggal_realisasi_selesai} onChange={(v: any) => setForm({ ...form, tanggal_realisasi_selesai: v })} />
               <Field label="Kendala / Catatan" value={form.kendala_catatan} onChange={(v: any) => setForm({ ...form, kendala_catatan: v })} multiline />
             </ScrollView>
             {err && (

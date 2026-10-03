@@ -51,7 +51,21 @@ Full-stack mobile (Expo) + web application for monitoring KPR subsidized housing
 - Catatan proses per update tahap (`catatan_update` → `keterangan_tahap` di record + `catatan` di riwayat), opsional. Tampil di kartu & modal Riwayat
 - Branding: nama aplikasi **LBT One**, logo/emblem PT Lider Bahtera Toolsindo (assets/images/logo-lbt.png, emblem.png, icon, adaptive-icon, favicon, splash putih), title web "LBT One"
 
-## Backlog
-- Import data existing dari 4 Google Sheets: link yang dikirim user masih butuh login Google (401). Minta user set sharing "Anyone with the link → Viewer" atau upload file .xlsx/.csv
+## Iterasi 4 (Juni 2026) - Selesai (backend terverifikasi)
+- Import data existing dari 4 Google Sheets (share "Anyone with link"): script `/app/backend/seed_from_sheets.py` ubah URL ke `/export?format=csv`, parse, isi ke proyek "Mahkota Graha I" (36 unit, 25 KPR, 12 legalitas). Marketing & bank list diupdate ke data asli (HAWIG/ADIT/WIDA/SRI).
+- Multi-proyek: koleksi `projects`, field `project_id` di units/kpr/legality/photos/docs, index unik `(project_id, blok_kavling)`. Scoping via header `X-Project-Id` (dependency `current_project`). CRUD `/api/projects` (Admin Utama). Switcher proyek di Dashboard; kelola proyek di Pengaturan. Nama proyek "Mahkota Graha I" (tanpa "Subang").
+- Dashboard Marketing: `GET /api/dashboard/marketing` → ringkasan pribadi (total, segera diputihkan, perlu tindak lanjut, SP3K, done, masuk bulan ini, target). Target per marketing diatur Admin di Pengaturan (`marketing_targets`).
+- Reminder Berkas Macet: `perlu_tindak_lanjut` (status PROSES/SP3K tanpa update > 7 hari) → label "Perlu Tindak Lanjut" + filter di tab KPR + KPI + alert Dashboard.
+- Ekspor Riwayat: laporan Excel kini punya sheet "Riwayat Perubahan" (audit perubahan tiap berkas).
+- AI Asisten (tab Lainnya → AI Asisten): chat tanya-jawab data + ringkasan otomatis + bantu tulis catatan, pilih model Claude (`claude-sonnet-5-5`) / ChatGPT (`gpt-5.6-terra`); generate gambar (Gemini nano banana). Pakai EMERGENT_LLM_KEY.
+- Social login: Google (Emergent managed) `POST /api/auth/session` & Apple (iOS, verifikasi JWKS) `POST /api/auth/apple` → cocokkan `email` user terdaftar → JWT. Email user diatur di Kelola User. Login username/password tetap jalan.
 
-## Status: Iterasi 2 Complete
+## Status: Iterasi 4 Complete
+
+## Iterasi 4.1 (Juni 2026) - Selesai (penyesuaian dashboard & input)
+- Dashboard KPI: "Done" → "Done (Akad)"; "Total Berkas" → "Total Berjalan" (tidak menghitung yang sudah akad); tambah KPI "Pemberkasan" (baru booking/pemberkasan). SP3K tetap = SP3K belum akad.
+- KPI bisa diklik → modal rincian berkas (nama, blok, marketing, tahap, status, tgl). Dari modal, Admin Utama & Admin KPR bisa "Putihkan" berkas PROSES dan "Aktifkan lagi" (batal putih) berkas DIPUTIHKAN (blok kembali bisa dibooking).
+- Rekap per Marketing indikator baru: Berjalan (booking/pemberkasan/proses), SP3K (belum akad), Akad (done), Diputihkan — ikut filter bulan.
+- Legalitas: nomor sertifikat/IMB/NOP tidak ditampilkan (hanya status Done/Proses/Rencana); bisa dilihat semua role, hanya Admin Legal/Utama yang bisa ubah.
+- Input tanggal (booking, mulai, target, realisasi) kini pakai KALENDER (DateField, react-native-calendars), tampil dd/mm/yyyy, simpan ISO.
+- Fix: index unik email users pakai partialFilterExpression type string + omit field bila kosong (bug 500 saat buat >1 user tanpa email).

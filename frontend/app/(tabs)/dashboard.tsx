@@ -1,12 +1,13 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import Icon from "@react-native-vector-icons/ionicons";
 import { api } from "@/src/api";
 import { useAuth, roleLabel } from "@/src/auth-context";
+import { useProject } from "@/src/project-context";
 import { colors, spacing, radius, heroGradient } from "@/src/theme";
 import { downloadReport, monthLabel, recentMonths } from "@/src/report-utils";
 
@@ -24,14 +25,21 @@ function reportScopeLabel(role?: string) {
 export default function Dashboard() {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
+  const { projects, activeId, activeProject, setActive } = useProject();
   const [month, setMonth] = useState<string>("");
   const [marketing, setMarketing] = useState<string>("");
   const [exporting, setExporting] = useState<"" | "xlsx" | "pdf">("");
   const [exportErr, setExportErr] = useState<string | null>(null);
 
   const { data, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ["dashboard", month, marketing],
+    queryKey: ["dashboard", activeId, month, marketing],
     queryFn: () => api.dashboard({ month: month || undefined, marketing: marketing || undefined }),
+  });
+  const isMarketing = user?.role === "marketing";
+  const mktDashQ = useQuery({
+    queryKey: ["mkt-dash", activeId, month],
+    queryFn: () => api.marketingDashboard({ month: month || undefined }),
+    enabled: isMarketing,
   });
   const projectInfoQ = useQuery({
     queryKey: ["project_info"],
@@ -39,8 +47,42 @@ export default function Dashboard() {
   });
   const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing") });
 
-  const projectName = projectInfoQ.data?.value?.project_name || "Mahkota Graha";
-  const companyName = projectInfoQ.data?.value?.company_name || "PT Lider Bahtera Toolsindo";
+  const projectName = activeProject?.name || projectInfoQ.data?.value?.project_name || "Mahkota Graha I";
+  const companyName = activeProject?.company_name || projectInfoQ.data?.value?.company_name || "PT Lider Bahtera Toolsindo";
+  const mkt = mktDashQ.data;
+  const qc = useQueryClient();
+  const canPutih = user?.role === "admin_utama" || user?.role === "admin_kpr";
+  const [detail, setDetail] = useState<{ title: string; key: string } | null>(null);
+  const [actBusy, setActBusy] = useState<string | null>(null);
+  const [actErr, setActErr] = useState<string | null>(null);
+
+  const rows: any[] = data?.kpr_rows || [];
+  const detailItems = (key: string): any[] => {
+    switch (key) {
+      case "total_berjalan": return rows.filter((r) => r.status !== "DONE");
+      case "proses": return rows.filter((r) => r.status === "PROSES");
+      case "sp3k": return rows.filter((r) => r.status === "SP3K");
+      case "done": return rows.filter((r) => r.status === "DONE");
+      case "diputihkan": return rows.filter((r) => r.status === "DIPUTIHKAN");
+      case "pemberkasan": return rows.filter((r) => (r.tahap_saat_ini || "").toLowerCase() === "pemberkasan" && r.status !== "DONE" && r.status !== "DIPUTIHKAN");
+      case "nearing": return rows.filter((r) => r.status === "PROSES" && r.days_to_pemutihan !== null && r.days_to_pemutihan <= 3);
+      case "macet": return rows.filter((r) => r.perlu_tindak_lanjut);
+      default: return rows;
+    }
+  };
+
+  const doPutih = async (id: string, batal: boolean) => {
+    setActBusy(id); setActErr(null);
+    try {
+      if (batal) await api.batalPutihkanKpr(id);
+      else await api.putihkanKpr(id, "Diputihkan dari Dashboard");
+      await qc.invalidateQueries({ queryKey: ["dashboard"] });
+      await qc.invalidateQueries({ queryKey: ["kpr"] });
+      await refetch();
+    } catch (e: any) {
+      setActErr(e?.message || "Gagal");
+    } finally { setActBusy(null); }
+  };
 
   const kpi = data?.kpi;
 
@@ -97,6 +139,16 @@ export default function Dashboard() {
 
         {/* Filter & Export */}
         <View style={styles.filterCard}>
+          {projects.length > 0 && (
+            <>
+              <Text style={styles.filterTitle}>Proyek</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                {projects.map((p: any) => (
+                  <Chip key={p.id} label={p.name} active={activeId === p.id} onPress={() => setActive(p.id)} testID={`project-${p.id}`} />
+                ))}
+              </ScrollView>
+            </>
+          )}
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <Text style={styles.filterTitle}>Filter Rekap</Text>
             {(month || marketing) ? (
@@ -140,14 +192,41 @@ export default function Dashboard() {
           </View>
         ) : (
           <View style={{ padding: spacing.lg, gap: spacing.lg }}>
+            {isMarketing && mkt && (
+              <View style={[styles.card, { backgroundColor: colors.brandSecondary, borderColor: colors.brandPrimary }]} testID="marketing-summary">
+                <Text style={[styles.cardTitle, { color: colors.onBrandSecondary }]}>
+                  Ringkasan Saya · {mkt.marketing || user?.marketing_name || "-"}
+                </Text>
+                <View style={styles.unitGrid}>
+                  <UnitStat label="Total Berkas" value={mkt.total} tone="info" />
+                  <UnitStat label="Segera Diputihkan" value={mkt.segera_diputihkan} tone="error" />
+                  <UnitStat label="Perlu T. Lanjut" value={mkt.macet} tone="warning" />
+                  <UnitStat label="SP3K" value={mkt.sp3k} tone="info" />
+                  <UnitStat label="Done (Akad)" value={mkt.done} tone="success" />
+                  <UnitStat label="Masuk Bln Ini" value={mkt.bulan_ini} />
+                </View>
+                <View style={{ marginTop: spacing.sm }}>
+                  <Text style={styles.targetLabel}>
+                    Target bulan ini: {mkt.target > 0 ? `${mkt.bulan_ini} / ${mkt.target}` : "belum diatur Admin"}
+                  </Text>
+                  {mkt.target > 0 && (
+                    <View style={styles.progressTrack}>
+                      <View style={[styles.progressFill, { width: `${Math.min(100, Math.round((mkt.bulan_ini / mkt.target) * 100))}%` }]} />
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
             {/* KPI Grid */}
             <View style={styles.kpiGrid}>
-              <KpiCard label="Total Berkas" value={kpi?.total ?? 0} icon="folder" color={colors.brandPrimary} />
-              <KpiCard label="Proses" value={kpi?.proses ?? 0} icon="time" color={colors.warning} />
-              <KpiCard label="SP3K" value={kpi?.sp3k ?? 0} icon="checkmark-done" color={colors.info} />
-              <KpiCard label="Done (Akad)" value={kpi?.done ?? 0} icon="trophy" color={colors.success} />
-              <KpiCard label="Diputihkan" value={kpi?.diputihkan ?? 0} icon="close-circle" color={colors.error} />
-              <KpiCard label="Jatuh Tempo" value={kpi?.nearing_count ?? 0} icon="warning" color={colors.error} />
+              <KpiCard label="Total Berjalan" value={kpi?.total_berjalan ?? 0} icon="folder" color={colors.brandPrimary} onPress={() => setDetail({ title: "Berkas Berjalan (belum akad)", key: "total_berjalan" })} />
+              <KpiCard label="Pemberkasan" value={kpi?.pemberkasan ?? 0} icon="documents" color={colors.info} onPress={() => setDetail({ title: "Baru Booking / Pemberkasan", key: "pemberkasan" })} />
+              <KpiCard label="Proses" value={kpi?.proses ?? 0} icon="time" color={colors.warning} onPress={() => setDetail({ title: "Berkas Proses", key: "proses" })} />
+              <KpiCard label="SP3K" value={kpi?.sp3k ?? 0} icon="checkmark-done" color={colors.info} onPress={() => setDetail({ title: "Berkas SP3K (belum akad)", key: "sp3k" })} />
+              <KpiCard label="Done (Akad)" value={kpi?.done ?? 0} icon="trophy" color={colors.success} onPress={() => setDetail({ title: "Berkas Done (Akad)", key: "done" })} />
+              <KpiCard label="Diputihkan" value={kpi?.diputihkan ?? 0} icon="close-circle" color={colors.error} onPress={() => setDetail({ title: "Berkas Diputihkan", key: "diputihkan" })} />
+              <KpiCard label="Jatuh Tempo" value={kpi?.nearing_count ?? 0} icon="warning" color={colors.error} onPress={() => setDetail({ title: "Mendekati Jatuh Tempo", key: "nearing" })} />
+              <KpiCard label="Perlu Tindak Lanjut" value={kpi?.macet_count ?? 0} icon="alert-circle" color={colors.warning} onPress={() => setDetail({ title: "Perlu Tindak Lanjut", key: "macet" })} />
             </View>
 
             {/* Indicators */}
@@ -155,7 +234,7 @@ export default function Dashboard() {
               <Text style={styles.cardTitle}>Indikator Utama</Text>
               <View style={styles.indicatorRow}>
                 <IndItem label="% SP3K" value={`${kpi?.pct_sp3k ?? 0}%`} />
-                <IndItem label="% Done" value={`${kpi?.pct_done ?? 0}%`} />
+                <IndItem label="% Done (Akad)" value={`${kpi?.pct_done ?? 0}%`} />
                 <IndItem label="Rata² Progres" value={`${kpi?.avg_progress ?? 0}%`} />
               </View>
             </View>
@@ -181,6 +260,25 @@ export default function Dashboard() {
               </View>
             )}
 
+            {/* Perlu Tindak Lanjut (macet > 7 hari) */}
+            {data?.macet?.length > 0 && (
+              <View style={[styles.card, { borderColor: colors.warning, borderWidth: 1, backgroundColor: "#FFFBEB" }]} testID="macet-alert">
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Icon name="alert-circle" size={20} color={colors.warning} />
+                  <Text style={[styles.cardTitle, { color: colors.warning, marginBottom: 0 }]}>Perlu Tindak Lanjut (tanpa update &gt; 7 hari)</Text>
+                </View>
+                {data.macet.slice(0, 8).map((r: any) => (
+                  <View key={r.id} style={styles.nearingItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.nearingName}>{r.nama_konsumen}</Text>
+                      <Text style={styles.nearingSub}>{r.blok_kavling} · {r.marketing} · {r.tahap_saat_ini}</Text>
+                    </View>
+                    <Text style={[styles.nearingDays, { color: colors.warning }]}>{r.status}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {/* Ringkasan Unit */}
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Ringkasan Unit Bangunan</Text>
@@ -198,13 +296,15 @@ export default function Dashboard() {
             {data?.by_marketing?.length > 0 && (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rekap per Marketing</Text>
+                <Text style={styles.rekapLegend}>Berjalan (booking/pemberkasan/proses) · SP3K belum akad · Akad (done) · Diputihkan</Text>
                 {data.by_marketing.map((m: any) => (
                   <View key={m.marketing} style={styles.rekapRow}>
                     <Text style={styles.rekapName}>{m.marketing}</Text>
                     <View style={styles.rekapStats}>
-                      <Text style={styles.rekapStat}>Total: <Text style={styles.rekapStatVal}>{m.total}</Text></Text>
-                      <Text style={styles.rekapStat}>SP3K+Done: <Text style={styles.rekapStatVal}>{m.sp3k_done}</Text></Text>
-                      <Text style={styles.rekapStat}>Putih: <Text style={[styles.rekapStatVal, { color: colors.error }]}>{m.diputihkan}</Text></Text>
+                      <Text style={styles.rekapStat}>Berjalan: <Text style={styles.rekapStatVal}>{m.proses}</Text></Text>
+                      <Text style={styles.rekapStat}>SP3K: <Text style={styles.rekapStatVal}>{m.sp3k}</Text></Text>
+                      <Text style={styles.rekapStat}>Akad: <Text style={[styles.rekapStatVal, { color: colors.success }]}>{m.done}</Text></Text>
+                      <Text style={styles.rekapStat}>Diputihkan: <Text style={[styles.rekapStatVal, { color: colors.error }]}>{m.diputihkan}</Text></Text>
                     </View>
                   </View>
                 ))}
@@ -230,6 +330,52 @@ export default function Dashboard() {
           </View>
         )}
       </ScrollView>
+
+      <Modal visible={!!detail} transparent animationType="slide" onRequestClose={() => setDetail(null)}>
+        <View style={styles.modalWrap}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHead}>
+              <Text style={styles.modalTitle}>{detail?.title} ({detail ? detailItems(detail.key).length : 0})</Text>
+              <Pressable testID="detail-close" onPress={() => setDetail(null)} hitSlop={8}>
+                <Icon name="close" size={22} color={colors.onSurface} />
+              </Pressable>
+            </View>
+            {actErr && <Text style={{ color: colors.error, fontSize: 12, paddingHorizontal: spacing.lg }}>{actErr}</Text>}
+            <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.sm }}>
+              {detail && detailItems(detail.key).length === 0 && (
+                <Text style={{ color: colors.muted, textAlign: "center", padding: spacing.lg }}>Tidak ada data</Text>
+              )}
+              {detail && detailItems(detail.key).map((r) => (
+                <View key={r.id} style={styles.detailItem}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailName}>{r.nama_konsumen}</Text>
+                    <Text style={styles.detailSub}>Blok {r.blok_kavling} · {r.marketing} · {r.tahap_saat_ini}</Text>
+                    <Text style={styles.detailSub}>
+                      Status: {r.status}
+                      {r.status === "PROSES" && r.days_to_pemutihan !== null ? ` · sisa ${r.days_to_pemutihan} hari` : ""}
+                      {r.tanggal_sp3k ? ` · SP3K ${r.tanggal_sp3k}` : ""}
+                      {r.tanggal_akad ? ` · Akad ${r.tanggal_akad}` : ""}
+                    </Text>
+                  </View>
+                  {canPutih && (r.status === "PROSES") && !r.has_sp3k && (
+                    <Pressable testID={`putih-${r.id}`} onPress={() => doPutih(r.id, false)} disabled={actBusy === r.id}
+                      style={[styles.detailBtn, { backgroundColor: colors.error }]}>
+                      {actBusy === r.id ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.detailBtnText}>Putihkan</Text>}
+                    </Pressable>
+                  )}
+                  {canPutih && r.status === "DIPUTIHKAN" && r.diputihkan_manual && (
+                    <Pressable testID={`batal-${r.id}`} onPress={() => doPutih(r.id, true)} disabled={actBusy === r.id}
+                      style={[styles.detailBtn, { backgroundColor: colors.success }]}>
+                      {actBusy === r.id ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.detailBtnText}>Aktifkan lagi</Text>}
+                    </Pressable>
+                  )}
+                </View>
+              ))}
+              <View style={{ height: spacing.xl }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -242,15 +388,16 @@ function Chip({ label, active, onPress, testID }: any) {
   );
 }
 
-function KpiCard({ label, value, icon, color }: any) {
+function KpiCard({ label, value, icon, color, onPress }: any) {
   return (
-    <View style={styles.kpiCard} testID={`kpi-${label}`}>
+    <Pressable style={styles.kpiCard} testID={`kpi-${label}`} onPress={onPress}>
       <View style={[styles.kpiIcon, { backgroundColor: color + "20" }]}>
         <Icon name={icon} size={18} color={color} />
       </View>
       <Text style={styles.kpiValue}>{value}</Text>
       <Text style={styles.kpiLabel}>{label}</Text>
-    </View>
+      {onPress ? <Icon name="chevron-forward" size={13} color={colors.muted} style={{ position: "absolute", top: 10, right: 10 }} /> : null}
+    </Pressable>
   );
 }
 
@@ -342,4 +489,17 @@ const styles = StyleSheet.create({
   rekapStats: { flexDirection: "row", gap: spacing.md, marginTop: 4, flexWrap: "wrap" },
   rekapStat: { fontSize: 11, color: colors.muted },
   rekapStatVal: { fontWeight: "700", color: colors.onSurface },
+  targetLabel: { fontSize: 12, fontWeight: "600", color: colors.onBrandSecondary },
+  progressTrack: { height: 8, borderRadius: 4, backgroundColor: colors.surfaceTertiary, marginTop: 6, overflow: "hidden" },
+  progressFill: { height: 8, borderRadius: 4, backgroundColor: colors.brandPrimary },
+  rekapLegend: { fontSize: 10, color: colors.muted, marginTop: -spacing.sm, marginBottom: 2 },
+  modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
+  modalCard: { backgroundColor: colors.surfaceSecondary, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, maxHeight: "82%" },
+  modalHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg },
+  modalTitle: { fontSize: 16, fontWeight: "800", color: colors.onSurface, flex: 1 },
+  detailItem: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
+  detailName: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  detailSub: { fontSize: 11, color: colors.muted, marginTop: 2 },
+  detailBtn: { paddingHorizontal: spacing.md, height: 34, borderRadius: radius.sm, alignItems: "center", justifyContent: "center" },
+  detailBtnText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
 });

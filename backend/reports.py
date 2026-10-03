@@ -116,6 +116,23 @@ def _legal_table(ctx: dict):
     return head, rows
 
 
+def _history_table(ctx: dict):
+    head = ["Waktu", "Nama Konsumen", "Blok", "Aksi", "Perubahan", "Catatan", "Oleh"]
+    rows = []
+    for h in ctx.get("history", []):
+        perub = "; ".join(
+            f"{c.get('field', '')}: {c.get('dari') if c.get('dari') is not None else '-'}"
+            f" \u2192 {c.get('ke') if c.get('ke') is not None else '-'}"
+            for c in (h.get("perubahan") or [])
+        )
+        rows.append([
+            (h.get("waktu", "")[:19]).replace("T", " "),
+            h.get("nama_konsumen", ""), h.get("blok_kavling", ""),
+            h.get("aksi", ""), perub, h.get("catatan", "") or "", h.get("nama", ""),
+        ])
+    return head, rows
+
+
 # ---------------- Excel ----------------
 def _write_sheet(ws, title: str, head, rows, start_row: int = 1):
     ws.cell(row=start_row, column=1, value=title).font = Font(bold=True, size=13, color=BLUE)
@@ -161,6 +178,7 @@ def build_xlsx(ctx: dict) -> bytes:
         r = _write_sheet(ws, "Rekap per Marketing", *_marketing_table(ctx), start_row=r)
         _write_sheet(ws, "Rekap per Bank", *_bank_table(ctx), start_row=r)
         _write_sheet(wb.create_sheet("Berkas KPR"), _title(ctx), *_kpr_table(ctx))
+        _write_sheet(wb.create_sheet("Riwayat Perubahan"), "Riwayat Perubahan Berkas", *_history_table(ctx))
     if "unit" in sections:
         _write_sheet(wb.create_sheet("Progres Bangunan"), "Progres Bangunan per Unit", *_unit_table(ctx))
     if "legal" in sections:

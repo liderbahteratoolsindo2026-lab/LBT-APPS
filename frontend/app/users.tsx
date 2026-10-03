@@ -22,21 +22,34 @@ export default function Users() {
   const qc = useQueryClient();
   const { data = [] } = useQuery({ queryKey: ["users"], queryFn: () => api.listUsers() });
   const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing") });
-  const [form, setForm] = useState({ username: "", password: "", name: "", role: "admin_kpr", marketing_name: "" });
+  const [form, setForm] = useState({ username: "", password: "", name: "", role: "admin_kpr", marketing_name: "", email: "" });
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [resetFor, setResetFor] = useState<string | null>(null);
+  const [emailEdit, setEmailEdit] = useState<{ username: string; value: string } | null>(null);
 
   const create = async () => {
     setErr(null); setSaving(true);
     try {
-      await api.createUser({ ...form, marketing_name: form.role === "marketing" ? form.marketing_name : null });
-      setForm({ username: "", password: "", name: "", role: "admin_kpr", marketing_name: "" });
+      await api.createUser({
+        ...form,
+        email: form.email.trim() || null,
+        marketing_name: form.role === "marketing" ? form.marketing_name : null,
+      });
+      setForm({ username: "", password: "", name: "", role: "admin_kpr", marketing_name: "", email: "" });
       qc.invalidateQueries({ queryKey: ["users"] });
     } catch (e: any) { setErr(e?.message || "Gagal"); }
     finally { setSaving(false); }
   };
   const del = async (u: string) => { await api.deleteUser(u); qc.invalidateQueries({ queryKey: ["users"] }); };
+  const saveEmail = async () => {
+    if (!emailEdit) return;
+    try {
+      await api.setUserEmail(emailEdit.username, emailEdit.value.trim() || null);
+      setEmailEdit(null);
+      qc.invalidateQueries({ queryKey: ["users"] });
+    } catch (e: any) { setErr(e?.message || "Gagal simpan email"); }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -52,6 +65,7 @@ export default function Users() {
           <TextInput placeholder="Username" placeholderTextColor={colors.muted} value={form.username} onChangeText={(v) => setForm({ ...form, username: v })} style={styles.input} />
           <TextInput placeholder="Nama Lengkap" placeholderTextColor={colors.muted} value={form.name} onChangeText={(v) => setForm({ ...form, name: v })} style={styles.input} />
           <TextInput placeholder="Password" placeholderTextColor={colors.muted} value={form.password} onChangeText={(v) => setForm({ ...form, password: v })} secureTextEntry style={styles.input} />
+          <TextInput placeholder="Email (untuk login Google/Apple, opsional)" placeholderTextColor={colors.muted} value={form.email} onChangeText={(v) => setForm({ ...form, email: v })} autoCapitalize="none" keyboardType="email-address" style={styles.input} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }}>
             {ROLES.map((r) => (
               <Pressable key={r.value} onPress={() => setForm({ ...form, role: r.value })}
@@ -81,19 +95,35 @@ export default function Users() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Daftar User ({data.length})</Text>
           {data.map((u: any) => (
-            <View key={u.username} style={styles.userRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.userName}>{u.name}</Text>
-                <Text style={styles.userSub}>@{u.username} · {ROLES.find((r) => r.value === u.role)?.label}{u.marketing_name ? ` · ${u.marketing_name}` : ""}</Text>
-              </View>
-              {u.username !== "admin" && (
-                <Pressable onPress={() => del(u.username)} hitSlop={8}>
-                  <Icon name="trash" size={18} color={colors.error} />
+            <View key={u.username} style={styles.userBlock}>
+              <View style={styles.userRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.userName}>{u.name}</Text>
+                  <Text style={styles.userSub}>@{u.username} · {ROLES.find((r) => r.value === u.role)?.label}{u.marketing_name ? ` · ${u.marketing_name}` : ""}</Text>
+                  <Text style={styles.userSub}>{u.email ? `✉ ${u.email}` : "✉ belum ada email"}</Text>
+                </View>
+                <Pressable testID={`email-${u.username}`} onPress={() => setEmailEdit({ username: u.username, value: u.email || "" })} hitSlop={8} style={{ marginLeft: spacing.sm }}>
+                  <Icon name="mail" size={18} color={colors.brandPrimary} />
                 </Pressable>
+                <Pressable testID={`reset-pwd-${u.username}`} onPress={() => setResetFor(u.username)} hitSlop={8} style={{ marginLeft: spacing.md }}>
+                  <Icon name="key" size={18} color={colors.brandPrimary} />
+                </Pressable>
+                {u.username !== "admin" && (
+                  <Pressable onPress={() => del(u.username)} hitSlop={8} style={{ marginLeft: spacing.md }}>
+                    <Icon name="trash" size={18} color={colors.error} />
+                  </Pressable>
+                )}
+              </View>
+              {emailEdit?.username === u.username && (
+                <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
+                  <TextInput testID={`email-input-${u.username}`} value={emailEdit.value} autoCapitalize="none" keyboardType="email-address"
+                    onChangeText={(v) => setEmailEdit({ username: u.username, value: v })}
+                    placeholder="email@domain.com" placeholderTextColor={colors.muted} style={[styles.input, { flex: 1 }]} />
+                  <Pressable testID={`email-save-${u.username}`} onPress={saveEmail} style={[styles.saveBtn, { width: 90, height: 40 }]}>
+                    <Text style={styles.saveBtnText}>Simpan</Text>
+                  </Pressable>
+                </View>
               )}
-              <Pressable testID={`reset-pwd-${u.username}`} onPress={() => setResetFor(u.username)} hitSlop={8} style={{ marginLeft: spacing.md }}>
-                <Icon name="key" size={18} color={colors.brandPrimary} />
-              </Pressable>
             </View>
           ))}
         </View>
@@ -116,6 +146,7 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: colors.brandPrimary, height: 44, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
   saveBtnText: { color: colors.onBrandPrimary, fontSize: 14, fontWeight: "700" },
   userRow: { flexDirection: "row", alignItems: "center", paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider },
+  userBlock: {},
   userName: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
   userSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   hint: { fontSize: 11, color: colors.muted },

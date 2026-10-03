@@ -10,6 +10,7 @@ import { api } from "@/src/api";
 import { useAuth, canEdit, canEditKprItem } from "@/src/auth-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { Badge, statusToKind } from "@/src/badge";
+import { DateField } from "@/src/components/date-field";
 import { formatDateTime } from "@/src/report-utils";
 
 type Kpr = any;
@@ -48,6 +49,8 @@ export default function KprScreen() {
     return data.filter((r: Kpr) => {
       if (statusFilter === "SEGERA") {
         if (!(r.status === "PROSES" && r.days_to_pemutihan !== null && r.days_to_pemutihan <= 3)) return false;
+      } else if (statusFilter === "MACET") {
+        if (!r.perlu_tindak_lanjut) return false;
       } else if (statusFilter && r.status !== statusFilter) return false;
       if (!q) return true;
       return (r.nama_konsumen || "").toLowerCase().includes(q) ||
@@ -60,10 +63,12 @@ export default function KprScreen() {
   const segeraCount = useMemo(
     () => data.filter((r: Kpr) => r.status === "PROSES" && r.days_to_pemutihan !== null && r.days_to_pemutihan <= 3).length,
     [data]);
+  const macetCount = useMemo(() => data.filter((r: Kpr) => r.perlu_tindak_lanjut).length, [data]);
 
   const FILTERS: { key: string; label: string; tone?: string }[] = [
     { key: "", label: "Semua" },
     { key: "SEGERA", label: `Segera Diputihkan${segeraCount ? ` (${segeraCount})` : ""}`, tone: "error" },
+    { key: "MACET", label: `Perlu Tindak Lanjut${macetCount ? ` (${macetCount})` : ""}`, tone: "warning" },
     { key: "PROSES", label: "Proses" },
     { key: "SP3K", label: "SP3K" },
     { key: "DONE", label: "Done" },
@@ -149,6 +154,12 @@ export default function KprScreen() {
                 </View>
                 <Badge label={item.status} kind={statusToKind(item.status)} />
               </View>
+              {item.perlu_tindak_lanjut && (
+                <View style={styles.macetTag} testID={`macet-${item.blok_kavling}`}>
+                  <Icon name="alert-circle" size={13} color={colors.warning} />
+                  <Text style={styles.macetText}>Perlu Tindak Lanjut · tanpa update &gt; 7 hari</Text>
+                </View>
+              )}
               <View style={styles.cardFoot}>
                 <Text style={styles.footText}>Tahap: <Text style={styles.footBold}>{item.tahap_saat_ini}</Text></Text>
                 <Text style={styles.footText}>Booking: <Text style={styles.footBold}>{item.tanggal_booking}</Text></Text>
@@ -447,7 +458,7 @@ function KprFormModal({ visible, onClose, editing, onSaved, user }: any) {
               <SelectField label="Cabang Pemroses" value={form.cabang_pemroses}
                 options={(branchesQ.data?.items || []).map((i: any) => ({ label: i.name, value: i.name }))}
                 onChange={(v) => setForm({ ...form, cabang_pemroses: v })} />
-              <Field label="Tanggal Booking (YYYY-MM-DD)" value={form.tanggal_booking} onChange={(v) => setForm({ ...form, tanggal_booking: v })} />
+              <DateField label="Tanggal Booking" value={form.tanggal_booking} onChange={(v) => setForm({ ...form, tanggal_booking: v })} />
               <SelectField label="Tahap Saat Ini" value={form.tahap_saat_ini}
                 options={stageOptions}
                 onChange={(v) => setForm({ ...form, tahap_saat_ini: v })} />
@@ -549,6 +560,8 @@ const styles = StyleSheet.create({
   putihText: { flex: 1, fontSize: 11, color: colors.error, lineHeight: 15 },
   noteRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, backgroundColor: colors.brandSecondary, padding: spacing.sm, borderRadius: radius.sm },
   noteText: { flex: 1, fontSize: 12, color: colors.onBrandSecondary, lineHeight: 16 },
+  macetTag: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: colors.warning, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.sm, alignSelf: "flex-start", marginTop: 4 },
+  macetText: { fontSize: 11, color: colors.warning, fontWeight: "700" },
   actionBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     backgroundColor: colors.brandSecondary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill,

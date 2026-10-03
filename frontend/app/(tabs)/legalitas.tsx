@@ -56,9 +56,9 @@ export default function Legalitas() {
                     <Text style={{ fontSize: 11, color: colors.brandPrimary, fontWeight: "600" }}>{editable ? "Ubah / Dokumen" : "Dokumen"}</Text>
                   </View>
                 </View>
-                <LegalRow label="Sertifikat" status={l.status_sertifikat} info={l.nomor_sertifikat} />
-                <LegalRow label="IMB/PBG" status={l.status_imb_pbg} info={l.nomor_imb_pbg} />
-                <LegalRow label="PBB" status={l.status_pbb} info={l.nop} />
+                <LegalRow label="Sertifikat" status={l.status_sertifikat} />
+                <LegalRow label="IMB/PBG" status={l.status_imb_pbg} />
+                <LegalRow label="PBB" status={l.status_pbb} />
                 <LegalRow label="SSP/PPh" status={l.status_ssp_pph} />
                 <LegalRow label="BPHTB" status={l.status_bphtb} />
               </Pressable>
@@ -174,9 +174,9 @@ function UnitLegalityModal({ data, editable, onClose, onSaved }: any) {
                 </>
               ) : (
                 <View style={{ marginBottom: spacing.sm }}>
-                  <LegalRow label="Sertifikat" status={data.status_sertifikat} info={data.nomor_sertifikat} />
-                  <LegalRow label="IMB/PBG" status={data.status_imb_pbg} info={data.nomor_imb_pbg} />
-                  <LegalRow label="PBB" status={data.status_pbb} info={data.nop} />
+                  <LegalRow label="Sertifikat" status={data.status_sertifikat} />
+                  <LegalRow label="IMB/PBG" status={data.status_imb_pbg} />
+                  <LegalRow label="PBB" status={data.status_pbb} />
                   <LegalRow label="SSP/PPh" status={data.status_ssp_pph} />
                   <LegalRow label="BPHTB" status={data.status_bphtb} />
                   {!!data.keterangan && <ProjectRow label="Keterangan" value={data.keterangan} />}

@@ -4,6 +4,7 @@ PT Lider Bahtera Toolsindo
 """
 import os
 import uuid
+import base64
 import logging
 import asyncio
 from datetime import datetime, timedelta, timezone, date
@@ -15,7 +16,7 @@ import bcrypt
 import jwt
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Query, Header
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -85,8 +86,26 @@ def _get_object_sync(path: str) -> tuple[bytes, str]:
 async def lifespan(app: FastAPI):
     await db.users.create_index("username", unique=True)
     await db.kpr.create_index("id", unique=True)
-    await db.units.create_index("blok_kavling", unique=True)
-    await db.legality_unit.create_index("blok_kavling", unique=True)
+    await db.projects.create_index("id", unique=True)
+    try:
+        existing_u = await db.users.index_information()
+        if "email_1" in existing_u:
+            await db.users.drop_index("email_1")
+    except Exception:
+        pass
+    await db.users.create_index("email", unique=True,
+                                partialFilterExpression={"email": {"$type": "string"}})
+    # Unit & legalitas kini unik per (proyek, blok). Lepas index lama single-field bila ada.
+    for coll in (db.units, db.legality_unit):
+        try:
+            existing = await coll.index_information()
+            if "blok_kavling_1" in existing:
+                await coll.drop_index("blok_kavling_1")
+        except Exception:
+            pass
+    await db.units.create_index([("project_id", 1), ("blok_kavling", 1)], unique=True)
+    await db.legality_unit.create_index([("project_id", 1), ("blok_kavling", 1)], unique=True)
+    await db.ai_messages.create_index([("session_id", 1), ("waktu", 1)])
     await seed_defaults()
     try:
         await run_in_threadpool(_init_storage_sync)
@@ -132,6 +151,7 @@ class UserCreate(BaseModel):
     name: str
     role: Role
     marketing_name: Optional[str] = None
+    email: Optional[str] = None
 
 class SettingItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -193,6 +213,12 @@ class LegalityProjectIn(BaseModel):
     slf: str = ""
     catatan_umum: str = ""
 
+class ProjectIn(BaseModel):
+    name: str
+    company_name: str = "PT Lider Bahtera Toolsindo"
+    alamat: str = ""
+    active: bool = True
+
 
 # ============== Auth helpers ==============
 def hash_password(pw: str) -> str:
@@ -230,6 +256,20 @@ def require_roles(*allowed: Role):
             raise HTTPException(status_code=403, detail="Insufficient role")
         return user
     return dep
+
+async def get_default_project_id() -> Optional[str]:
+    doc = await db.projects.find_one({}, sort=[("order", 1)])
+    return doc["id"] if doc else None
+
+async def current_project(x_project_id: Optional[str] = Header(None, alias="X-Project-Id")) -> str:
+    if x_project_id:
+        p = await db.projects.find_one({"id": x_project_id})
+        if p:
+            return x_project_id
+    pid = await get_default_project_id()
+    if not pid:
+        raise HTTPException(500, "Belum ada proyek")
+    return pid
 
 KPR_EDITORS: tuple = ("admin_utama", "admin_kpr", "marketing")
 
@@ -318,9 +358,24 @@ async def seed_defaults():
         await db.config.insert_one({"key": "pemutihan_days", "value": 14})
     if not await db.config.find_one({"key": "project_info"}):
         await db.config.insert_one({"key": "project_info", "value": {
-            "project_name": "Mahkota Graha Subang",
+            "project_name": "Mahkota Graha I",
             "company_name": "PT Lider Bahtera Toolsindo",
         }})
+    if not await db.config.find_one({"key": "marketing_targets"}):
+        await db.config.insert_one({"key": "marketing_targets", "value": {}})
+
+    # Proyek default (multi-proyek)
+    if await db.projects.count_documents({}) == 0:
+        await db.projects.insert_one({
+            "id": str(uuid.uuid4()),
+            "name": "Mahkota Graha I",
+            "company_name": "PT Lider Bahtera Toolsindo",
+            "alamat": "Subang",
+            "order": 0,
+            "active": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    default_pid = await get_default_project_id()
 
     # Seed sample units
     if await db.units.count_documents({}) == 0:
@@ -338,6 +393,7 @@ async def seed_defaults():
         for blok, stage, _ in samples:
             await db.units.insert_one({
                 "blok_kavling": blok,
+                "project_id": default_pid,
                 "nama_kontraktor": "CV Jaya Bangun",
                 "tahap_konstruksi": stage,
                 "tanggal_mulai": today.isoformat(),
@@ -414,6 +470,23 @@ async def compute_kpr_status(record: dict) -> dict:
     record["status"] = status_
     record["days_to_pemutihan"] = days_left
     record["has_sp3k"] = has_sp3k
+    # Reminder berkas macet: aktif (belum selesai) & tidak ada update > 7 hari
+    stale = False
+    if status_ in ("PROSES", "SP3K"):
+        upd = record.get("tanggal_update_terakhir")
+        last = None
+        if upd:
+            try:
+                last = datetime.fromisoformat(upd.replace("Z", "+00:00"))
+            except Exception:
+                last = None
+        if last is None:
+            stale = True
+        else:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            stale = (datetime.now(timezone.utc) - last).days > 7
+    record["perlu_tindak_lanjut"] = stale
     return record
 
 async def compute_unit_status(unit: dict) -> dict:
@@ -447,7 +520,7 @@ async def login(data: LoginIn):
         access_token=make_token(user["username"]),
         expires_in=TOKEN_MIN * 60,
         user={"username": user["username"], "name": user["name"], "role": user["role"],
-              "marketing_name": user.get("marketing_name")},
+              "marketing_name": user.get("marketing_name"), "email": user.get("email")},
     )
 
 @api_router.get("/auth/me")
@@ -473,6 +546,77 @@ async def admin_reset_password(username: str, body: ResetPasswordIn, _=Depends(r
         raise HTTPException(404, "User tidak ditemukan")
     return {"ok": True}
 
+# ============== Social login (Google / Apple) ==============
+class SessionIn(BaseModel):
+    session_id: str
+
+class AppleIn(BaseModel):
+    identity_token: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+
+class EmailIn(BaseModel):
+    email: Optional[str] = None
+
+async def _login_by_email(email: Optional[str]) -> TokenOut:
+    email = (email or "").strip().lower()
+    if not email:
+        raise HTTPException(403, "Email tidak tersedia dari penyedia login")
+    user = await db.users.find_one({"email": email})
+    if not user or not user.get("active", False):
+        raise HTTPException(403, f"Email {email} belum terdaftar. Hubungi Admin untuk didaftarkan.")
+    return TokenOut(
+        access_token=make_token(user["username"]),
+        expires_in=TOKEN_MIN * 60,
+        user={"username": user["username"], "name": user["name"], "role": user["role"],
+              "marketing_name": user.get("marketing_name"), "email": user.get("email")},
+    )
+
+EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+
+def _fetch_emergent_session_sync(session_id: str) -> dict:
+    r = requests.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": session_id}, timeout=30)
+    if r.status_code != 200:
+        raise HTTPException(401, "Sesi Google tidak valid atau kedaluwarsa")
+    return r.json()
+
+@api_router.post("/auth/session", response_model=TokenOut)
+async def google_session(body: SessionIn):
+    data = await run_in_threadpool(_fetch_emergent_session_sync, body.session_id)
+    return await _login_by_email(data.get("email"))
+
+APPLE_AUDIENCES = [a.strip() for a in os.environ.get("APPLE_AUDIENCES", "").split(",") if a.strip()]
+_apple_jwks = jwt.PyJWKClient("https://appleid.apple.com/auth/keys")
+
+def _verify_apple_sync(identity_token: str) -> dict:
+    signing_key = _apple_jwks.get_signing_key_from_jwt(identity_token)
+    return jwt.decode(identity_token, signing_key.key, algorithms=["RS256"],
+                      audience=APPLE_AUDIENCES or None, issuer="https://appleid.apple.com")
+
+@api_router.post("/auth/apple", response_model=TokenOut)
+async def apple_login(body: AppleIn):
+    try:
+        claims = await run_in_threadpool(_verify_apple_sync, body.identity_token)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(401, "Token Apple tidak valid")
+    return await _login_by_email(claims.get("email") or body.email)
+
+@api_router.put("/users/{username}/email")
+async def set_user_email(username: str, body: EmailIn, _=Depends(require_roles("admin_utama"))):
+    email = (body.email or "").strip().lower() or None
+    if email:
+        other = await db.users.find_one({"email": email})
+        if other and other["username"] != username:
+            raise HTTPException(400, "Email sudah dipakai user lain")
+        res = await db.users.update_one({"username": username}, {"$set": {"email": email}})
+    else:
+        res = await db.users.update_one({"username": username}, {"$unset": {"email": ""}})
+    if res.matched_count != 1:
+        raise HTTPException(404, "User tidak ditemukan")
+    return {"ok": True}
+
 # ============== Users (Admin Utama) ==============
 @api_router.get("/users")
 async def list_users(_=Depends(require_roles("admin_utama"))):
@@ -485,7 +629,10 @@ async def create_user(data: UserCreate, _=Depends(require_roles("admin_utama")))
         raise HTTPException(400, "Username sudah ada")
     if data.role == "marketing" and not (data.marketing_name or "").strip():
         raise HTTPException(400, "Pilih nama marketing untuk akun role Marketing")
-    await db.users.insert_one({
+    email = (data.email or "").strip().lower() or None
+    if email and await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email sudah dipakai user lain")
+    doc = {
         "username": data.username,
         "name": data.name,
         "password_hash": hash_password(data.password),
@@ -493,7 +640,10 @@ async def create_user(data: UserCreate, _=Depends(require_roles("admin_utama")))
         "marketing_name": (data.marketing_name or "").strip() or None,
         "active": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if email:
+        doc["email"] = email
+    await db.users.insert_one(doc)
     return {"ok": True}
 
 @api_router.delete("/users/{username}")
@@ -528,10 +678,49 @@ async def put_config(key: str, body: dict, _=Depends(require_roles("admin_utama"
     await db.config.update_one({"key": key}, {"$set": {"value": body.get("value")}}, upsert=True)
     return {"ok": True}
 
+# ============== Projects (Multi-proyek) ==============
+@api_router.get("/projects")
+async def list_projects(_=Depends(current_user)):
+    rows = await db.projects.find({}, {"_id": 0}).sort("order", 1).to_list(200)
+    return rows
+
+@api_router.post("/projects")
+async def create_project(data: ProjectIn, _=Depends(require_roles("admin_utama"))):
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(400, "Nama proyek wajib diisi")
+    n = await db.projects.count_documents({})
+    doc = {"id": str(uuid.uuid4()), "name": name,
+           "company_name": data.company_name.strip() or "PT Lider Bahtera Toolsindo",
+           "alamat": data.alamat.strip(), "order": n, "active": data.active,
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.projects.insert_one(dict(doc))
+    return doc
+
+@api_router.put("/projects/{pid}")
+async def update_project(pid: str, data: ProjectIn, _=Depends(require_roles("admin_utama"))):
+    res = await db.projects.update_one({"id": pid}, {"$set": {
+        "name": data.name.strip(), "company_name": data.company_name.strip(),
+        "alamat": data.alamat.strip(), "active": data.active}})
+    if res.matched_count != 1:
+        raise HTTPException(404, "Proyek tidak ditemukan")
+    return {"ok": True}
+
+@api_router.delete("/projects/{pid}")
+async def delete_project(pid: str, _=Depends(require_roles("admin_utama"))):
+    if await db.projects.count_documents({}) <= 1:
+        raise HTTPException(400, "Minimal harus ada 1 proyek")
+    cnt = (await db.kpr.count_documents({"project_id": pid})
+           + await db.units.count_documents({"project_id": pid}))
+    if cnt > 0:
+        raise HTTPException(400, "Proyek masih memiliki data berkas/unit. Hapus datanya dulu.")
+    await db.projects.delete_one({"id": pid})
+    return {"ok": True}
+
 # ============== KPR ==============
 @api_router.get("/kpr")
-async def list_kpr(_=Depends(current_user)):
-    rows = await db.kpr.find({}, {"_id": 0}).to_list(2000)
+async def list_kpr(project_id: str = Depends(current_project), _=Depends(current_user)):
+    rows = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
     for r in rows:
         await compute_kpr_status(r)
     return rows
@@ -558,19 +747,21 @@ async def apply_stage_rules(user: dict, new_data: dict, existing: Optional[dict]
     return new_data
 
 @api_router.post("/kpr")
-async def create_kpr(data: KprIn, user=Depends(require_roles(*KPR_EDITORS))):
+async def create_kpr(data: KprIn, project_id: str = Depends(current_project),
+                     user=Depends(require_roles(*KPR_EDITORS))):
     assert_marketing_scope(user, data.marketing)
     # Validate unit: construction started AND unit not used by other
-    unit = await db.units.find_one({"blok_kavling": data.blok_kavling})
+    unit = await db.units.find_one({"blok_kavling": data.blok_kavling, "project_id": project_id})
     if not unit:
         raise HTTPException(400, f"Unit {data.blok_kavling} tidak ditemukan")
     pct = await get_construction_percent(unit.get("tahap_konstruksi", ""))
     if pct == 0:
         raise HTTPException(400, "Unit belum mulai dibangun (0%)")
-    active = await _active_kpr_for_blok(data.blok_kavling)
+    active = await _active_kpr_for_blok(data.blok_kavling, project_id=project_id)
     if active:
         raise HTTPException(400, f"Unit sudah dipakai konsumen: {active['nama_konsumen']}")
     rec = data.dict()
+    rec["project_id"] = project_id
     catatan = (rec.pop("catatan_update", "") or "").strip()
     rec["keterangan_tahap"] = catatan
     rec = await apply_stage_rules(user, rec, None)
@@ -601,7 +792,7 @@ async def update_kpr(kpr_id: str, data: KprIn, user=Depends(require_roles(*KPR_E
     note_changed = catatan != (existing.get("keterangan_tahap") or "")
     if stage_changed or note_changed:
         new_data["keterangan_tahap"] = catatan
-    if stage_changed:
+    if changes or note_changed:
         new_data["tanggal_update_terakhir"] = datetime.now(timezone.utc).isoformat()
     await db.kpr.update_one({"id": kpr_id}, {"$set": new_data})
     if changes or (note_changed and catatan):
@@ -616,9 +807,13 @@ async def kpr_history(kpr_id: str, _=Depends(current_user)):
 class PemutihanIn(BaseModel):
     alasan: str = ""
 
-async def _active_kpr_for_blok(blok: str, exclude_id: Optional[str] = None) -> Optional[dict]:
+async def _active_kpr_for_blok(blok: str, exclude_id: Optional[str] = None,
+                               project_id: Optional[str] = None) -> Optional[dict]:
     """Berkas aktif (bukan DIPUTIHKAN) yang memakai blok ini."""
-    rows = await db.kpr.find({"blok_kavling": blok}, {"_id": 0}).to_list(100)
+    q: dict = {"blok_kavling": blok}
+    if project_id:
+        q["project_id"] = project_id
+    rows = await db.kpr.find(q, {"_id": 0}).to_list(100)
     for r in rows:
         if exclude_id and r["id"] == exclude_id:
             continue
@@ -660,7 +855,8 @@ async def batal_putihkan_kpr(kpr_id: str, user=Depends(require_roles("admin_utam
         raise HTTPException(404, "Tidak ditemukan")
     if not rec.get("diputihkan_manual"):
         raise HTTPException(400, "Berkas ini tidak diputihkan secara manual")
-    other = await _active_kpr_for_blok(rec["blok_kavling"], exclude_id=kpr_id)
+    other = await _active_kpr_for_blok(rec["blok_kavling"], exclude_id=kpr_id,
+                                       project_id=rec.get("project_id"))
     if other:
         raise HTTPException(400, f"Blok {rec['blok_kavling']} sudah dipakai konsumen baru: {other['nama_konsumen']}")
     await db.kpr.update_one({"id": kpr_id}, {
@@ -692,17 +888,17 @@ async def deleted_log(_=Depends(require_roles("admin_utama"))):
 
 # ============== Units ==============
 @api_router.get("/units")
-async def list_units(_=Depends(current_user)):
-    rows = await db.units.find({}, {"_id": 0}).to_list(2000)
+async def list_units(project_id: str = Depends(current_project), _=Depends(current_user)):
+    rows = await db.units.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
     for r in rows:
         await compute_unit_status(r)
     return rows
 
 @api_router.get("/units/available")
-async def available_units(_=Depends(current_user)):
+async def available_units(project_id: str = Depends(current_project), _=Depends(current_user)):
     """Units with construction started AND no active KPR"""
-    units = await db.units.find({}, {"_id": 0}).to_list(2000)
-    kpr_rows = await db.kpr.find({}, {"_id": 0}).to_list(2000)
+    units = await db.units.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    kpr_rows = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
     used = set()
     for k in kpr_rows:
         enriched = await compute_kpr_status(dict(k))
@@ -716,24 +912,31 @@ async def available_units(_=Depends(current_user)):
     return result
 
 @api_router.post("/units")
-async def upsert_unit(data: UnitIn, _=Depends(require_roles("admin_utama", "admin_bangunan"))):
+async def upsert_unit(data: UnitIn, project_id: str = Depends(current_project),
+                      _=Depends(require_roles("admin_utama", "admin_bangunan"))):
     rec = data.dict()
+    rec["project_id"] = project_id
     rec["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.units.update_one({"blok_kavling": data.blok_kavling}, {"$set": rec}, upsert=True)
+    await db.units.update_one({"blok_kavling": data.blok_kavling, "project_id": project_id},
+                              {"$set": rec}, upsert=True)
     return {"ok": True}
 
 @api_router.put("/units/{blok}")
-async def update_unit(blok: str, data: UnitIn, _=Depends(require_roles("admin_utama", "admin_bangunan"))):
+async def update_unit(blok: str, data: UnitIn, project_id: str = Depends(current_project),
+                      _=Depends(require_roles("admin_utama", "admin_bangunan"))):
     rec = data.dict()
+    rec["project_id"] = project_id
     rec["updated_at"] = datetime.now(timezone.utc).isoformat()
     rec["blok_kavling"] = blok
-    await db.units.update_one({"blok_kavling": blok}, {"$set": rec}, upsert=True)
+    await db.units.update_one({"blok_kavling": blok, "project_id": project_id},
+                              {"$set": rec}, upsert=True)
     return {"ok": True}
 
 @api_router.post("/units/{blok}/photo")
 async def upload_unit_photo(blok: str, file: UploadFile = File(...), catatan: str = Form(""),
+                             project_id: str = Depends(current_project),
                              user=Depends(require_roles("admin_utama", "admin_bangunan"))):
-    unit = await db.units.find_one({"blok_kavling": blok})
+    unit = await db.units.find_one({"blok_kavling": blok, "project_id": project_id})
     if not unit:
         raise HTTPException(404, "Unit tidak ditemukan")
     content = await file.read()
@@ -752,6 +955,7 @@ async def upload_unit_photo(blok: str, file: UploadFile = File(...), catatan: st
     photo = {
         "id": str(uuid.uuid4()),
         "blok_kavling": blok,
+        "project_id": project_id,
         "path": path,
         "tahap_konstruksi": stage,
         "persen_progres": await get_construction_percent(stage),
@@ -761,22 +965,26 @@ async def upload_unit_photo(blok: str, file: UploadFile = File(...), catatan: st
         "uploaded_at": now,
     }
     await db.unit_photos.insert_one(dict(photo))
-    await db.units.update_one({"blok_kavling": blok}, {"$set": {"foto_path": path, "updated_at": now}})
+    await db.units.update_one({"blok_kavling": blok, "project_id": project_id},
+                              {"$set": {"foto_path": path, "updated_at": now}})
     return {"ok": True, "path": path, "photo": photo}
 
 @api_router.get("/units/{blok}/photos")
-async def list_unit_photos(blok: str, _=Depends(current_user)):
-    rows = await db.unit_photos.find({"blok_kavling": blok}, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
+async def list_unit_photos(blok: str, project_id: str = Depends(current_project), _=Depends(current_user)):
+    rows = await db.unit_photos.find({"blok_kavling": blok, "project_id": project_id},
+                                     {"_id": 0}).sort("uploaded_at", -1).to_list(500)
     return rows
 
 @api_router.delete("/units/{blok}/photos/{photo_id}")
-async def delete_unit_photo(blok: str, photo_id: str, _=Depends(require_roles("admin_utama", "admin_bangunan"))):
-    photo = await db.unit_photos.find_one({"id": photo_id, "blok_kavling": blok})
+async def delete_unit_photo(blok: str, photo_id: str, project_id: str = Depends(current_project),
+                            _=Depends(require_roles("admin_utama", "admin_bangunan"))):
+    photo = await db.unit_photos.find_one({"id": photo_id, "blok_kavling": blok, "project_id": project_id})
     if not photo:
         raise HTTPException(404, "Foto tidak ditemukan")
     await db.unit_photos.delete_one({"id": photo_id})
-    latest = await db.unit_photos.find_one({"blok_kavling": blok}, sort=[("uploaded_at", -1)])
-    await db.units.update_one({"blok_kavling": blok},
+    latest = await db.unit_photos.find_one({"blok_kavling": blok, "project_id": project_id},
+                                           sort=[("uploaded_at", -1)])
+    await db.units.update_one({"blok_kavling": blok, "project_id": project_id},
                               {"$set": {"foto_path": latest["path"] if latest else None}})
     return {"ok": True}
 
@@ -806,39 +1014,43 @@ async def get_file(path: str, token: Optional[str] = Query(None), download: Opti
 
 # ============== Legality ==============
 @api_router.get("/legality/units")
-async def list_legality(_=Depends(current_user)):
-    rows = await db.legality_unit.find({}, {"_id": 0}).to_list(2000)
+async def list_legality(project_id: str = Depends(current_project), _=Depends(current_user)):
+    rows = await db.legality_unit.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
     return rows
 
 @api_router.put("/legality/units/{blok}")
-async def update_legality(blok: str, data: LegalityUnitIn,
+async def update_legality(blok: str, data: LegalityUnitIn, project_id: str = Depends(current_project),
                            _=Depends(require_roles("admin_utama", "admin_legal"))):
     rec = data.dict()
     rec["blok_kavling"] = blok
+    rec["project_id"] = project_id
     rec["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.legality_unit.update_one({"blok_kavling": blok}, {"$set": rec}, upsert=True)
+    await db.legality_unit.update_one({"blok_kavling": blok, "project_id": project_id},
+                                      {"$set": rec}, upsert=True)
     return {"ok": True}
 
 @api_router.get("/legality/project")
-async def get_legality_project(_=Depends(current_user)):
-    doc = await db.legality_project.find_one({"key": "main"}, {"_id": 0})
+async def get_legality_project(project_id: str = Depends(current_project), _=Depends(current_user)):
+    doc = await db.legality_project.find_one({"project_id": project_id}, {"_id": 0})
     if not doc:
-        return {"key": "main"}
+        return {"project_id": project_id}
     return doc
 
 @api_router.put("/legality/project")
-async def put_legality_project(data: LegalityProjectIn,
+async def put_legality_project(data: LegalityProjectIn, project_id: str = Depends(current_project),
                                  _=Depends(require_roles("admin_utama", "admin_legal"))):
-    await db.legality_project.update_one({"key": "main"},
-        {"$set": {**data.dict(), "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    await db.legality_project.update_one({"project_id": project_id},
+        {"$set": {**data.dict(), "project_id": project_id,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
     return {"ok": True}
 
 # --- Dokumen legalitas (scan/foto) ---
 LEGAL_DOC_EXT = {"jpg", "jpeg", "png", "webp", "heic", "pdf"}
 
 @api_router.get("/legality/docs")
-async def list_legality_docs(scope: str = "unit", blok: Optional[str] = None, _=Depends(current_user)):
-    q: dict = {"scope": scope}
+async def list_legality_docs(scope: str = "unit", blok: Optional[str] = None,
+                             project_id: str = Depends(current_project), _=Depends(current_user)):
+    q: dict = {"scope": scope, "project_id": project_id}
     if scope == "unit" and blok:
         q["blok_kavling"] = blok
     rows = await db.legality_docs.find(q, {"_id": 0}).sort("uploaded_at", -1).to_list(1000)
@@ -847,7 +1059,7 @@ async def list_legality_docs(scope: str = "unit", blok: Optional[str] = None, _=
 @api_router.post("/legality/docs")
 async def upload_legality_doc(file: UploadFile = File(...), scope: str = Form("unit"),
                               blok_kavling: str = Form(""), jenis: str = Form("Lainnya"),
-                              catatan: str = Form(""),
+                              catatan: str = Form(""), project_id: str = Depends(current_project),
                               user=Depends(require_roles("admin_utama", "admin_legal"))):
     if scope not in ("unit", "project"):
         raise HTTPException(400, "scope harus unit/project")
@@ -869,6 +1081,7 @@ async def upload_legality_doc(file: UploadFile = File(...), scope: str = Form("u
     doc = {
         "id": str(uuid.uuid4()),
         "scope": scope,
+        "project_id": project_id,
         "blok_kavling": blok_kavling if scope == "unit" else None,
         "jenis": jenis or "Lainnya",
         "catatan": catatan or "",
@@ -893,17 +1106,18 @@ async def delete_legality_doc(doc_id: str, _=Depends(require_roles("admin_utama"
 # ============== Dashboard ==============
 @api_router.get("/dashboard")
 async def dashboard(month: Optional[str] = None, marketing: Optional[str] = None,
-                      _=Depends(current_user)):
-    data = await build_dashboard_data(month, marketing)
-    data.pop("kpr_rows", None)
+                      project_id: str = Depends(current_project), _=Depends(current_user)):
+    data = await build_dashboard_data(month, marketing, project_id)
     data.pop("units", None)
     data.pop("legality", None)
     return data
 
-async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[str] = None) -> dict:
-    kpr_rows = await db.kpr.find({}, {"_id": 0}).to_list(2000)
-    units = await db.units.find({}, {"_id": 0}).to_list(2000)
-    legality = await db.legality_unit.find({}, {"_id": 0}).to_list(2000)
+async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[str] = None,
+                               project_id: Optional[str] = None) -> dict:
+    pq = {"project_id": project_id} if project_id else {}
+    kpr_rows = await db.kpr.find(pq, {"_id": 0}).to_list(2000)
+    units = await db.units.find(pq, {"_id": 0}).to_list(2000)
+    legality = await db.legality_unit.find(pq, {"_id": 0}).to_list(2000)
 
     # Filter kpr
     filtered = []
@@ -925,8 +1139,13 @@ async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[
     sp3k = sum(1 for r in filtered if r["status"] == "SP3K")
     done = sum(1 for r in filtered if r["status"] == "DONE")
     diputihkan = sum(1 for r in filtered if r["status"] == "DIPUTIHKAN")
+    pemberkasan = sum(1 for r in filtered
+                      if (r.get("tahap_saat_ini") or "").strip().lower() == "pemberkasan"
+                      and r["status"] not in ("DONE", "DIPUTIHKAN"))
+    total_berjalan = total - done  # berkas yang masih berjalan (belum akad)
     nearing = [r for r in filtered if r["status"] == "PROSES"
                and r.get("days_to_pemutihan") is not None and r["days_to_pemutihan"] <= 3]
+    macet = [r for r in filtered if r.get("perlu_tindak_lanjut")]
 
     pct_sp3k = round((sp3k + done) * 100 / total, 1) if total else 0.0
     pct_done = round(done * 100 / total, 1) if total else 0.0
@@ -937,13 +1156,18 @@ async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[
     for r in filtered:
         m = r.get("marketing", "-")
         g = by_marketing.setdefault(m, {"marketing": m, "total": 0, "proses": 0,
-                                          "diputihkan": 0, "sp3k_done": 0, "avg_progress": 0})
+                                          "sp3k": 0, "done": 0, "diputihkan": 0,
+                                          "sp3k_done": 0, "avg_progress": 0})
         g["total"] += 1
         if r["status"] == "PROSES":
             g["proses"] += 1
         elif r["status"] == "DIPUTIHKAN":
             g["diputihkan"] += 1
-        elif r["status"] in ("SP3K", "DONE"):
+        elif r["status"] == "SP3K":
+            g["sp3k"] += 1
+            g["sp3k_done"] += 1
+        elif r["status"] == "DONE":
+            g["done"] += 1
             g["sp3k_done"] += 1
 
     for g in by_marketing.values():
@@ -988,12 +1212,14 @@ async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[
 
     return {
         "kpi": {
-            "total": total, "proses": proses, "sp3k": sp3k,
-            "done": done, "diputihkan": diputihkan,
+            "total": total, "total_berjalan": total_berjalan, "proses": proses, "sp3k": sp3k,
+            "done": done, "diputihkan": diputihkan, "pemberkasan": pemberkasan,
             "pct_sp3k": pct_sp3k, "pct_done": pct_done,
             "avg_progress": avg_prog, "nearing_count": len(nearing),
+            "macet_count": len(macet),
         },
         "nearing": nearing,
+        "macet": macet,
         "by_marketing": list(by_marketing.values()),
         "by_bank": list(by_bank.values()),
         "unit_summary": unit_summary,
@@ -1028,22 +1254,41 @@ REPORT_SECTIONS_BY_ROLE = {
 
 @api_router.get("/reports/monthly")
 async def monthly_report(month: Optional[str] = None, marketing: Optional[str] = None,
-                         format: str = "xlsx", token: Optional[str] = Query(None),
+                         format: str = "xlsx", project: Optional[str] = Query(None),
+                         token: Optional[str] = Query(None),
                          credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer)] = None):
     username = _decode_query_token(token, credentials)
     user = await db.users.find_one({"username": username}, {"_id": 0, "password_hash": 0})
     if not user or not user.get("active", False):
         raise HTTPException(401, "Invalid token")
+    project_id = None
+    if project and await db.projects.find_one({"id": project}):
+        project_id = project
+    if not project_id:
+        project_id = await get_default_project_id()
+    proj = await db.projects.find_one({"id": project_id}) or {}
     sections = REPORT_SECTIONS_BY_ROLE.get(user["role"], ())
     if user["role"] == "marketing":
         marketing = user.get("marketing_name") or "-"
-    data = await build_dashboard_data(month, marketing)
-    info = await db.config.find_one({"key": "project_info"}) or {}
+    data = await build_dashboard_data(month, marketing, project_id)
+    # Riwayat perubahan berkas (untuk sheet audit)
+    history = []
+    if "kpr" in sections:
+        ids = [r["id"] for r in data.get("kpr_rows", [])]
+        if ids:
+            hrows = await db.kpr_history.find({"kpr_id": {"$in": ids}}, {"_id": 0}).sort("waktu", -1).to_list(5000)
+            name_by_id = {r["id"]: r.get("nama_konsumen", "") for r in data.get("kpr_rows", [])}
+            blok_by_id = {r["id"]: r.get("blok_kavling", "") for r in data.get("kpr_rows", [])}
+            for h in hrows:
+                h["nama_konsumen"] = name_by_id.get(h["kpr_id"], "")
+                h["blok_kavling"] = blok_by_id.get(h["kpr_id"], "")
+            history = hrows
     ctx = {
-        "project_name": (info.get("value") or {}).get("project_name", "Mahkota Graha Subang"),
-        "company_name": (info.get("value") or {}).get("company_name", "PT Lider Bahtera Toolsindo"),
+        "project_name": proj.get("name", "Mahkota Graha I"),
+        "company_name": proj.get("company_name", "PT Lider Bahtera Toolsindo"),
         "month": month, "marketing": marketing,
         "sections": sections,
+        "history": history,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generated_by": user.get("name", username),
         **data,
@@ -1059,11 +1304,11 @@ async def monthly_report(month: Optional[str] = None, marketing: Optional[str] =
                     headers={"Content-Disposition": f'attachment; filename="{label}.{ext}"'})
 
 @api_router.get("/dashboard/combined-table")
-async def combined_table(_=Depends(current_user)):
+async def combined_table(project_id: str = Depends(current_project), _=Depends(current_user)):
     """Unit-centric table: blok, consumer, berkas status, construction stage, progress, legal status"""
-    units = await db.units.find({}, {"_id": 0}).to_list(2000)
-    kpr = await db.kpr.find({}, {"_id": 0}).to_list(2000)
-    legality = await db.legality_unit.find({}, {"_id": 0}).to_list(2000)
+    units = await db.units.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    kpr = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    legality = await db.legality_unit.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
 
     kpr_by_blok = {}
     for r in kpr:
@@ -1091,6 +1336,152 @@ async def combined_table(_=Depends(current_user)):
             "marketing": (k or {}).get("marketing"),
         })
     return out
+
+# ============== Dashboard Marketing ==============
+@api_router.get("/dashboard/marketing")
+async def marketing_dashboard(month: Optional[str] = None, marketing: Optional[str] = None,
+                              project_id: str = Depends(current_project), user=Depends(current_user)):
+    name = user.get("marketing_name") if user["role"] == "marketing" else (marketing or None)
+    now_month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    rows = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(3000)
+    mine = []
+    for r in rows:
+        await compute_kpr_status(r)
+        if name and r.get("marketing") != name:
+            continue
+        mine.append(r)
+    nearing = [r for r in mine if r["status"] == "PROSES"
+               and r.get("days_to_pemutihan") is not None and r["days_to_pemutihan"] <= 3]
+    macet_list = [r for r in mine if r.get("perlu_tindak_lanjut")]
+    targets = (await db.config.find_one({"key": "marketing_targets"}) or {}).get("value") or {}
+    target = int(targets.get(name or "", 0) or 0)
+    return {
+        "marketing": name,
+        "total": len(mine),
+        "proses": sum(1 for r in mine if r["status"] == "PROSES"),
+        "sp3k": sum(1 for r in mine if r["status"] == "SP3K"),
+        "done": sum(1 for r in mine if r["status"] == "DONE"),
+        "diputihkan": sum(1 for r in mine if r["status"] == "DIPUTIHKAN"),
+        "segera_diputihkan": len(nearing),
+        "macet": len(macet_list),
+        "bulan_ini": sum(1 for r in mine if (r.get("tanggal_booking") or "").startswith(now_month)),
+        "target": target, "month": now_month,
+        "nearing": nearing, "macet_list": macet_list,
+    }
+
+# ============== AI Asisten (Claude / ChatGPT / Image) ==============
+AI_PROVIDERS = {
+    "claude": ("anthropic", "claude-sonnet-5-5"),
+    "chatgpt": ("openai", "gpt-5.6-terra"),
+}
+
+class AiChatIn(BaseModel):
+    message: str
+    provider: str = "claude"
+    session_id: Optional[str] = None
+    mode: str = "chat"  # chat | summary | catatan
+
+class AiImageIn(BaseModel):
+    prompt: str
+
+async def _ai_data_context(project_id: str) -> str:
+    proj = await db.projects.find_one({"id": project_id}) or {}
+    kpr = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    units = await db.units.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    legality = await db.legality_unit.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    for r in kpr:
+        await compute_kpr_status(r)
+    for u in units:
+        await compute_unit_status(u)
+    counts = {"PROSES": 0, "SP3K": 0, "DONE": 0, "DIPUTIHKAN": 0}
+    for r in kpr:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    macet = [r for r in kpr if r.get("perlu_tindak_lanjut")]
+    lines = [f"PROYEK: {proj.get('name','-')} ({proj.get('company_name','-')})",
+             f"Total berkas KPR: {len(kpr)} | Proses: {counts['PROSES']} | SP3K: {counts['SP3K']} | Done(Akad): {counts['DONE']} | Diputihkan: {counts['DIPUTIHKAN']}",
+             f"Total unit: {len(units)} | Rata-rata progres: {round(sum(u['persen_progres'] for u in units)/len(units),1) if units else 0}%",
+             f"Berkas perlu tindak lanjut (>7 hari tanpa update): {len(macet)}",
+             "", "DAFTAR BERKAS (nama | blok | marketing | bank | tahap | status | sisa hari pemutihan | perlu_tindak_lanjut):"]
+    for r in kpr[:120]:
+        lines.append(f"- {r.get('nama_konsumen','')} | {r.get('blok_kavling','')} | {r.get('marketing','')} | "
+                     f"{r.get('bank_pemroses','')} | {r.get('tahap_saat_ini','')} | {r['status']} | "
+                     f"{r.get('days_to_pemutihan')} | {'YA' if r.get('perlu_tindak_lanjut') else 'tidak'}")
+    lines.append("")
+    lines.append("LEGALITAS (blok | sertifikat | imb/pbg | pbb):")
+    for l in legality[:120]:
+        lines.append(f"- {l.get('blok_kavling','')} | {l.get('status_sertifikat') or '-'} | "
+                     f"{l.get('status_imb_pbg') or '-'} | {l.get('status_pbb') or '-'}")
+    return "\n".join(lines)
+
+@api_router.post("/ai/chat")
+async def ai_chat(body: AiChatIn, project_id: str = Depends(current_project), user=Depends(current_user)):
+    if not EMERGENT_KEY:
+        raise HTTPException(500, "AI belum dikonfigurasi (EMERGENT_LLM_KEY kosong)")
+    if body.provider not in AI_PROVIDERS:
+        raise HTTPException(400, "Provider harus 'claude' atau 'chatgpt'")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    session_id = body.session_id or str(uuid.uuid4())
+    ctx = await _ai_data_context(project_id)
+    base_sys = ("Anda adalah asisten AI untuk aplikasi monitoring KPR rumah subsidi 'LBT One' "
+                "milik PT Lider Bahtera Toolsindo. Jawab SELALU dalam Bahasa Indonesia, ringkas, "
+                "akurat, dan berbasis DATA yang diberikan. Jika data tidak ada, katakan tidak tahu.\n\n"
+                "DATA SAAT INI:\n" + ctx)
+    if body.mode == "summary":
+        base_sys += ("\n\nTUGAS: Buat ringkasan eksekutif status proyek: progres keseluruhan, "
+                     "komposisi status berkas, dan daftar berkas yang PERLU TINDAK LANJUT beserta saran aksi.")
+    elif body.mode == "catatan":
+        base_sys += ("\n\nTUGAS: Bantu tuliskan catatan/keterangan proses berkas yang singkat, "
+                     "profesional, dan jelas (maksimal 2 kalimat) sesuai konteks yang diberikan user.")
+    provider, model = AI_PROVIDERS[body.provider]
+    chat = LlmChat(api_key=EMERGENT_KEY, session_id=session_id, system_message=base_sys).with_model(provider, model)
+    # muat riwayat singkat agar multi-turn
+    prior = await db.ai_messages.find({"session_id": session_id}, {"_id": 0}).sort("waktu", 1).to_list(20)
+    history_txt = ""
+    for m in prior[-8:]:
+        history_txt += f"\n{m['role'].upper()}: {m['content']}"
+    user_text = (f"Riwayat percakapan sebelumnya:{history_txt}\n\nPertanyaan baru: {body.message}"
+                 if history_txt else body.message)
+    try:
+        reply = await chat.send_message(UserMessage(text=user_text))
+    except Exception as e:
+        logger.exception("AI chat gagal")
+        raise HTTPException(502, f"AI gagal merespons: {e}")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.ai_messages.insert_many([
+        {"id": str(uuid.uuid4()), "session_id": session_id, "project_id": project_id,
+         "role": "user", "content": body.message, "username": user["username"], "waktu": now},
+        {"id": str(uuid.uuid4()), "session_id": session_id, "project_id": project_id,
+         "role": "assistant", "content": reply, "username": user["username"], "waktu": now},
+    ])
+    return {"session_id": session_id, "reply": reply, "provider": body.provider}
+
+@api_router.get("/ai/history")
+async def ai_history(session_id: str, _=Depends(current_user)):
+    rows = await db.ai_messages.find({"session_id": session_id}, {"_id": 0}).sort("waktu", 1).to_list(200)
+    return rows
+
+@api_router.post("/ai/image")
+async def ai_image(body: AiImageIn, user=Depends(current_user)):
+    if not EMERGENT_KEY:
+        raise HTTPException(500, "AI belum dikonfigurasi (EMERGENT_LLM_KEY kosong)")
+    if not body.prompt.strip():
+        raise HTTPException(400, "Prompt tidak boleh kosong")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_KEY, session_id=str(uuid.uuid4()),
+                   system_message="You generate high quality images.").with_model(
+                   "gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
+    try:
+        text, images = await chat.send_message_multimodal_response(UserMessage(text=body.prompt))
+    except Exception as e:
+        logger.exception("AI image gagal")
+        raise HTTPException(502, f"Gagal membuat gambar: {e}")
+    if not images:
+        raise HTTPException(502, "Model tidak mengembalikan gambar")
+    img = images[0]
+    data = base64.b64decode(img["data"])
+    path = f"{APP_NAME}/ai/{user['username']}/{uuid.uuid4()}.png"
+    await run_in_threadpool(_put_object_sync, path, data, img.get("mime_type", "image/png"))
+    return {"path": path, "text": text or ""}
 
 # ============== Health ==============
 @api_router.get("/")

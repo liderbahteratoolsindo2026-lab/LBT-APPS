@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Icon from "@react-native-vector-icons/ionicons";
 import { api } from "@/src/api";
+import { useProject } from "@/src/project-context";
 import { colors, spacing, radius } from "@/src/theme";
 
 const LIST_CONFIGS: { key: string; title: string; hasPercent?: boolean }[] = [
@@ -74,6 +75,10 @@ export default function Pengaturan() {
           <TextInput testID="input-pemutihan" value={pemutihan} onChangeText={setPemutihan} keyboardType="numeric" style={styles.input} />
           <Pressable testID="save-pemutihan" onPress={savePem} style={styles.saveBtn}><Text style={styles.saveBtnText}>Simpan</Text></Pressable>
         </View>
+
+        <Text style={styles.sectionTitle}>Multi-Proyek</Text>
+        <ProjectsCard />
+        <TargetsCard />
 
         <Text style={styles.sectionTitle}>Daftar Referensi</Text>
         {LIST_CONFIGS.map((c) => (
@@ -171,6 +176,106 @@ function ListEditor({ keyName, title, hasPercent, onBack }: any) {
   );
 }
 
+function ProjectsCard() {
+  const qc = useQueryClient();
+  const { reload } = useProject();
+  const { data = [] } = useQuery({ queryKey: ["projects"], queryFn: () => api.listProjects() });
+  const [name, setName] = useState("");
+  const [company, setCompany] = useState("PT Lider Bahtera Toolsindo");
+  const [alamat, setAlamat] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["projects"] }); reload(); };
+
+  const add = async () => {
+    if (!name.trim()) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.createProject({ name: name.trim(), company_name: company.trim(), alamat: alamat.trim() });
+      setName(""); setAlamat("");
+      refresh();
+    } catch (e: any) { setErr(e?.message || "Gagal"); }
+    finally { setBusy(false); }
+  };
+  const del = async (id: string) => {
+    setErr(null);
+    try { await api.deleteProject(id); refresh(); }
+    catch (e: any) { setErr(e?.message || "Gagal hapus"); }
+  };
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Proyek ({data.length})</Text>
+      {data.map((p: any) => (
+        <View key={p.id} style={styles.projRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.projName}>{p.name}</Text>
+            <Text style={styles.projSub}>{p.company_name}{p.alamat ? ` · ${p.alamat}` : ""}</Text>
+          </View>
+          <Pressable testID={`del-project-${p.id}`} onPress={() => del(p.id)} hitSlop={8}>
+            <Icon name="trash" size={18} color={colors.error} />
+          </Pressable>
+        </View>
+      ))}
+      <Text style={styles.label}>Tambah Proyek Baru</Text>
+      <TextInput testID="new-project-name" placeholder="Nama proyek (mis. Mahkota Graha II)" placeholderTextColor={colors.muted}
+        value={name} onChangeText={setName} style={styles.input} />
+      <TextInput placeholder="Nama perusahaan" placeholderTextColor={colors.muted}
+        value={company} onChangeText={setCompany} style={styles.input} />
+      <TextInput placeholder="Alamat / lokasi (opsional)" placeholderTextColor={colors.muted}
+        value={alamat} onChangeText={setAlamat} style={styles.input} />
+      {err && <Text style={{ color: colors.error, fontSize: 12 }}>{err}</Text>}
+      <Pressable testID="add-project" onPress={add} disabled={busy} style={[styles.saveBtn, busy && { opacity: 0.6 }]}>
+        {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Tambah Proyek</Text>}
+      </Pressable>
+    </View>
+  );
+}
+
+function TargetsCard() {
+  const qc = useQueryClient();
+  const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing") });
+  const targetsQ = useQuery({ queryKey: ["marketing_targets"], queryFn: () => api.getConfig("marketing_targets") });
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const v = targetsQ.data?.value || {};
+    const out: Record<string, string> = {};
+    (marketingQ.data?.items || []).forEach((m: any) => { out[m.name] = String(v[m.name] ?? ""); });
+    setVals(out);
+  }, [targetsQ.data, marketingQ.data]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload: Record<string, number> = {};
+      Object.entries(vals).forEach(([k, s]) => { payload[k] = parseInt(s, 10) || 0; });
+      await api.putConfig("marketing_targets", payload);
+      qc.invalidateQueries({ queryKey: ["marketing_targets"] });
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Target Bulanan Marketing</Text>
+      <Text style={styles.hint}>Jumlah target berkas masuk per bulan untuk tiap marketing (0 = tidak diatur).</Text>
+      {(marketingQ.data?.items || []).map((m: any) => (
+        <View key={m.id} style={styles.targetRow}>
+          <Text style={styles.targetName}>{m.name}</Text>
+          <TextInput testID={`target-${m.name}`} value={vals[m.name] ?? ""} keyboardType="numeric"
+            onChangeText={(v) => setVals((s) => ({ ...s, [m.name]: v }))}
+            placeholder="0" placeholderTextColor={colors.muted} style={[styles.input, { width: 90 }]} />
+        </View>
+      ))}
+      <Pressable testID="save-targets" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]}>
+        {saving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Simpan Target</Text>}
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   header: { backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   h1: { fontSize: 22, fontWeight: "800", color: colors.onSurface },
@@ -185,4 +290,10 @@ const styles = StyleSheet.create({
   addSmall: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
   saveBtn: { backgroundColor: colors.brandPrimary, height: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
   saveBtnText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
+  hint: { fontSize: 11, color: colors.muted },
+  projRow: { flexDirection: "row", alignItems: "center", paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider },
+  projName: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  projSub: { fontSize: 11, color: colors.muted, marginTop: 2 },
+  targetRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md, paddingVertical: 4 },
+  targetName: { fontSize: 14, fontWeight: "600", color: colors.onSurface, flex: 1 },
 });

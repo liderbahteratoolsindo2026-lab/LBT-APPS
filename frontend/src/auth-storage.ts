@@ -52,4 +52,5 @@ export type User = {
   name: string;
   role: "admin_utama" | "admin_kpr" | "admin_legal" | "admin_bangunan" | "marketing";
   marketing_name?: string | null;
+  email?: string | null;
 };

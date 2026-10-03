@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 4 features all PASS (backend 20/20 in /app/backend/tests/test_iteration4.py). Multi-proyek: GET/POST/PUT/DELETE /api/projects verified; default dashboard returns kpi.total=25 (Mahkota Graha I), new project created via POST isolates data (kpr/units/legality/units all = [] under X-Project-Id header), DELETE empty project OK, DELETE project with data -> 400 (with sibling project present), DELETE last project -> 400. Data import correct: 25 KPR with real marketing (HAWIG/ADIT/WIDA/SRI subset), 36 units, 12 legality units, every KPR has boolean perlu_tindak_lanjut. Dashboard Marketing ADIT total=10 and includes segera_diputihkan/macet/sp3k/done/bulan_ini/target. Dashboard /api/dashboard exposes kpi.macet_count + array macet. Export /api/reports/monthly?format=xlsx&token=<admin> returns spreadsheetml with 'Riwayat' sheet. AI: POST /api/ai/chat {provider:'claude'} and {provider:'chatgpt'} both return non-empty reply + session_id, GET /api/ai/history returns user+assistant messages; POST /api/ai/image returns path. Social: /api/auth/session {bogus}->401, /api/auth/apple {bogus}->401. PUT /api/users/{username}/email: duplicate email -> 400 (works when both users seeded with non-null emails). RBAC: admin login OK, marketing user scoped (can't create KPR under another marketing name -> 403). FRONTEND (390x844): login page shows google-login-button & apple-login-button; admin login -> Dashboard renders project chip 'Mahkota Graha I', 7 KPI cards including 'Total Berkas 25', 'Perlu Tindak Lanjut 0', 'Jatuh Tempo 0', marketing chips ADIT+HAWIG+WIDA+SRI present. Berkas KPR tab has filter chips [filter-all, filter-SEGERA, filter-MACET (label 'Perlu Tindak Lanjut'), filter-PROSES, filter-SP3K, filter-DONE, filter-DIPUTIHKAN]. AI Asisten page: Claude/ChatGPT/Gambar toggles present, Claude reply 'Total berkas KPR 25 (Proses 9, SP3K 5, Done 5, Diputihkan 6)' received. Pengaturan: Multi-Proyek section (add-project + new-project-name input) + save-targets button present. Kelola User: ikon email + reset password per user. No red screen / RN errors. BACKEND BUG FOUND: email unique+sparse index + storing explicit null email -> duplicate-key 500 when creating 2+ users without email (sparse treats null as indexed value). This affected test_set_email_valid_and_duplicate at 1st run (worked around by seeding both users with distinct emails). Also /api/legality endpoint is actually /api/legality/units (not a bug, just naming).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/users (and PUT /api/users/{username}/email)",
+       "issue": "Email unique+sparse index + storing email as null causes DuplicateKeyError (500) when creating 2+ users without email. Fix: either omit 'email' key when null, or convert to partialFilterExpression {email: {$type: 'string'}}. See /app/backend/server.py:90 and 606/632. Reproduced in backend logs during initial test run."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Pengaturan > Info Proyek", "issues": ["Legacy field 'Nama Perumahan' still shows 'Mahkota Graha Subang' from older config while the actual project switcher name is 'Mahkota Graha I'. Confusing to users; consider removing legacy section OR syncing from project record."]}
+    ],
+    "react_native_issues": [
+      {"component": "Multiple screens using legacy shadow* RN style props",
+       "issue": "RN Web console warns '\"shadow*\" style props are deprecated. Use \"boxShadow\".' (not blocking). Reference: emitted from component styles across dashboard/kpr/ai/pengaturan/users."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [
+    "Fix email index: in /app/backend/server.py:90 switch to partialFilterExpression (unique only when email is a string), OR do not persist 'email': null (unset instead) in create_user and set_user_email.",
+    "Clean up legacy 'Nama Perumahan' in Pengaturan > Info Proyek section OR auto-sync from active project record (now that multi-project exists).",
+    "(Low) Migrate shadow* style props to boxShadow in RN Web styles to silence deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 1474 lines (grew from 1094). Still worth splitting into routers/{auth,users,projects,kpr,units,legality,reports,ai}.py.",
+    "_ai_data_context sends up to 120 kpr + 120 legality rows into system prompt — safe now (25/12) but scale guard would help if other projects grow.",
+    "/api/legality naming inconsistency: list endpoint is /api/legality/units, consider adding alias /api/legality for ergonomics.",
+    "delete_project order checks '<=1 projects' before 'has data' — if default (and only) project has data user sees 'Minimal harus ada 1 proyek' which hides the real reason. Minor UX nit.",
+    "POST /api/ai/chat does NOT persist conversation history across chats for a single session until after first message (session_id is generated server-side when absent). This is fine but UI must echo back session_id to maintain multi-turn (verified AI Asisten does)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new - 20 cases covering iteration 4 features)"
+  ],
+  "success_rate": {"backend": "100% (20/20 test_iteration4)", "frontend": "100% (login, dashboard, kpr filters, ai claude+chatgpt+image toggle, pengaturan multi-proyek + target, kelola user email icons all verified via Playwright at 390x844)"},
+  "seed_data_creation": "All test users/projects created during tests were cleaned up (TEST_Proyek_Kedua, TEST_SiblingForDelete, TEST_mail1, TEST_mail2, TEST_mkt_rbac). Seeded data (25 KPR, 36 units, 12 legality, admin + rina_mkt + kpr1 + bgn1 users) untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview URL: https://bangun-pantau-1.preview.emergentagent.com. Multi-project header: X-Project-Id; default project (no header) = Mahkota Graha I. Legality list endpoint: /api/legality/units (not /api/legality). Export token can be passed as ?token= query param (used by browser download link). AI providers: 'claude'=anthropic/claude-sonnet-5-5, 'chatgpt'=openai/gpt-5.6-terra; image gen via gemini-3.1-flash-image-preview. Backend uses emergentintegrations library with EMERGENT_LLM_KEY. KPR filter testIDs: filter-{all,SEGERA,MACET,PROSES,SP3K,DONE,DIPUTIHKAN}. Dashboard KPI testIDs: kpi-Total Berkas, kpi-Proses, kpi-SP3K, kpi-Done (Akad), kpi-Diputihkan, kpi-Jatuh Tempo, kpi-Perlu Tindak Lanjut. AI testIDs: ai-provider-claude, ai-provider-chatgpt, ai-image-toggle, ai-image-prompt, ai-image-generate, ai-input, ai-send, ai-quick-{summary|catatan}. Users testIDs: email-{username}, email-input-{username}, email-save-{username}, reset-pwd-{username}, create-user-btn. Pengaturan Multi-Proyek: new-project-name, add-project, del-project-{id}. Marketing target: target-{name}, save-targets. Pytest config needs -o addopts= to disable xdist for stateful tests that create+delete projects in same class.",
+  "rca_of_issue": "Email duplicate-key bug RCA: /app/backend/server.py:90 declares db.users.create_index('email', unique=True, sparse=True). Both create_user() (line 626-635) and set_user_email() (line 606) persist email as null when the input is empty. Sparse index only skips documents that OMIT the field; a document with email=null still occupies the index key (null). Thus the second insert/update with email=null violates uniqueness and raises pymongo.errors.DuplicateKeyError, returned to client as HTTP 500. Repro: POST /api/users with no email (ok, admin had no email key) -> POST /api/users again with no email -> 500. Mitigation: either use partialFilterExpression={'email': {'$type': 'string'}} on index creation, or in Python set the document to NOT include an 'email' key when empty (and $unset in update)."
+}

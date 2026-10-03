@@ -21,6 +21,7 @@ export default function More() {
         <Text style={styles.subtitle}>{user?.name} · {roleLabel(user?.role)}{user?.marketing_name ? ` (${user.marketing_name})` : ""}</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: 120 }}>
+        <Row icon="sparkles" label="AI Asisten" onPress={() => router.push("/ai-asisten")} testID="go-ai" />
         <Row icon="list" label="Tabel Gabungan Unit" onPress={() => router.push("/tabel-unit")} testID="go-table" />
         <Row icon="key" label="Ubah Password" onPress={() => setPwdOpen(true)} testID="go-change-password" />
         {isAdmin && (

@@ -6,13 +6,16 @@ type Ctx = {
   user: User | null;
   loading: boolean;
   login: (u: string, p: string) => Promise<void>;
+  loginWithGoogle: (session_id: string) => Promise<void>;
+  loginWithApple: (d: { identity_token: string; email?: string | null; name?: string | null }) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
 
 const AuthContext = createContext<Ctx>({
   user: null, loading: true,
-  login: async () => {}, logout: async () => {}, refresh: async () => {},
+  login: async () => {}, loginWithGoogle: async () => {}, loginWithApple: async () => {},
+  logout: async () => {}, refresh: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -46,6 +49,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(res.user);
   }, []);
 
+  const loginWithGoogle = useCallback(async (session_id: string) => {
+    const res = await api.googleSession(session_id);
+    await auth.setToken(res.access_token);
+    await auth.setUser(res.user);
+    setUser(res.user);
+  }, []);
+
+  const loginWithApple = useCallback(async (d: { identity_token: string; email?: string | null; name?: string | null }) => {
+    const res = await api.appleLogin(d);
+    await auth.setToken(res.access_token);
+    await auth.setUser(res.user);
+    setUser(res.user);
+  }, []);
+
   const logout = useCallback(async () => {
     await auth.clearToken();
     await auth.clearUser();
@@ -53,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithGoogle, loginWithApple, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );

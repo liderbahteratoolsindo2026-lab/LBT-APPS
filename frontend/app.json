@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
+      "usesAppleSignIn": true,
       "bundleIdentifier": "com.emergent.bangunpantau.ss2l10",
       "infoPlist": {
         "NSCameraUsageDescription": "Foto progres bangunan dan scan dokumen legalitas",
@@ -60,7 +61,8 @@
         }
       ],
       "@react-native-vector-icons/ionicons",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true

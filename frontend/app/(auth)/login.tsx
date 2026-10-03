@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator,
@@ -6,18 +6,33 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import Icon from "@react-native-vector-icons/ionicons";
+import * as WebBrowser from "expo-web-browser";
+import * as Linking from "expo-linking";
+import * as AppleAuthentication from "expo-apple-authentication";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth-context";
 import { colors, spacing, radius, heroGradient } from "@/src/theme";
 
+WebBrowser.maybeCompleteAuthSession();
+
+const AUTH_BASE = "https://auth.emergentagent.com/?redirect=";
+
+function extractSessionId(url: string | null): string | null {
+  if (!url) return null;
+  const m = url.match(/[?#&]session_id=([^&#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 export default function Login() {
-  const { login } = useAuth();
+  const { login, loginWithGoogle, loginWithApple } = useAuth();
   const insets = useSafeAreaInsets();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showPwd, setShowPwd] = useState(false);
+  const [appleAvail, setAppleAvail] = useState(false);
+  const processed = useRef<Set<string>>(new Set());
 
   const onSubmit = async () => {
     setErr(null);
@@ -28,6 +43,69 @@ export default function Login() {
       setErr(e?.message || "Login gagal");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSession = useCallback(async (sid: string) => {
+    if (!sid || processed.current.has(sid)) return;
+    processed.current.add(sid);
+    setLoading(true); setErr(null);
+    try {
+      await loginWithGoogle(sid);
+    } catch (e: any) {
+      setErr(e?.message || "Login Google gagal");
+    } finally {
+      setLoading(false);
+    }
+  }, [loginWithGoogle]);
+
+  useEffect(() => {
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const sid = extractSessionId((window.location.hash || "") + (window.location.search || ""));
+      if (sid) {
+        handleSession(sid).then(() => {
+          try { window.history.replaceState(window.history.state, "", window.location.pathname); } catch {}
+        });
+      }
+    }
+    AppleAuthentication.isAvailableAsync().then(setAppleAvail).catch(() => setAppleAvail(false));
+  }, [handleSession]);
+
+  const googleLogin = async () => {
+    setErr(null);
+    try {
+      if (Platform.OS === "web") {
+        const redirect = window.location.origin + "/";
+        window.location.href = AUTH_BASE + encodeURIComponent(redirect);
+        return;
+      }
+      const redirect = Linking.createURL("");
+      const res = await WebBrowser.openAuthSessionAsync(AUTH_BASE + encodeURIComponent(redirect), redirect);
+      let url = (res as any)?.url || null;
+      if (!url) url = await Linking.getInitialURL();
+      const sid = extractSessionId(url);
+      if (sid) await handleSession(sid);
+    } catch (e: any) {
+      setErr(e?.message || "Login Google gagal");
+    }
+  };
+
+  const appleLogin = async () => {
+    setErr(null);
+    try {
+      const cred = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      const name = cred.fullName
+        ? [cred.fullName.givenName, cred.fullName.familyName].filter(Boolean).join(" ")
+        : null;
+      await loginWithApple({ identity_token: cred.identityToken || "", email: cred.email, name });
+    } catch (e: any) {
+      if (e?.code === "ERR_REQUEST_CANCELED") return;
+      setErr(e?.message || "Login Apple gagal");
     }
   };
 
@@ -121,6 +199,30 @@ export default function Login() {
                 <Text style={styles.btnText}>Masuk</Text>
               )}
             </Pressable>
+
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>atau masuk dengan</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <Pressable testID="google-login-button" onPress={googleLogin} disabled={loading}
+              style={({ pressed }) => [styles.socialBtn, pressed && { opacity: 0.9 }]}>
+              <Icon name="logo-google" size={18} color="#EA4335" />
+              <Text style={styles.socialText}>Lanjut dengan Google</Text>
+            </Pressable>
+
+            {Platform.OS === "ios" && appleAvail && (
+              <Pressable testID="apple-login-button" onPress={appleLogin} disabled={loading}
+                style={({ pressed }) => [styles.socialBtn, { backgroundColor: "#000", borderColor: "#000" }, pressed && { opacity: 0.9 }]}>
+                <Icon name="logo-apple" size={18} color="#FFFFFF" />
+                <Text style={[styles.socialText, { color: "#FFFFFF" }]}>Lanjut dengan Apple</Text>
+              </Pressable>
+            )}
+
+            <Text style={styles.socialHint}>
+              Login Google/Apple hanya untuk email yang sudah didaftarkan Admin.
+            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -163,4 +265,14 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center", marginTop: spacing.xs,
   },
   btnText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
+  dividerRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: { fontSize: 11, color: colors.muted, fontWeight: "600" },
+  socialBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm,
+    height: 48, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  socialText: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  socialHint: { fontSize: 11, color: colors.muted, textAlign: "center" },
 });

@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { AuthProvider, useAuth } from "@/src/auth-context";
+import { ProjectProvider } from "@/src/project-context";
 import { colors } from "@/src/theme";
 
 LogBox.ignoreAllLogs(true);
@@ -45,7 +46,9 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <KeyboardProvider>
             <AuthProvider>
-              <AuthGate />
+              <ProjectProvider>
+                <AuthGate />
+              </ProjectProvider>
             </AuthProvider>
           </KeyboardProvider>
         </QueryClientProvider>

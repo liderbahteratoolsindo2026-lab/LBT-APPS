@@ -42,7 +42,16 @@ Full-stack mobile (Expo) + web application for monitoring KPR subsidized housing
 - Legalitas jadi tab utama (5 tab). Dokumen scan/foto/PDF per unit & proyek (`legality_docs`, Object Storage): upload/hapus admin_utama & admin_legal; semua role bisa unduh (`/api/files/{path}?download=`). Jenis dokumen dikelola di Pengaturan (`legality_doc_types`)
 - Login tidak lagi menampilkan kredensial default
 
+## Iterasi 3 (Juni 2026) - Selesai
+- Ubah password sendiri (`POST /api/auth/password`, Lainnya > Ubah Password) & reset password oleh Admin Utama (`POST /api/users/{u}/password`, ikon kunci di Kelola User). Min 6 karakter
+- Filter cepat tab Berkas KPR: Semua / Segera Diputihkan (≤3 hari) / Proses / SP3K / Done / Diputihkan
+- Pencarian + filter jenis di daftar dokumen legalitas
+- Cabang Pemroses (list `branches`: Subang, Bekasi, Purwakarta; dikelola di Pengaturan) pada berkas KPR; masuk laporan
+- Aturan tahap (`apply_stage_rules`): tgl SP3K/Akad otomatis terisi saat tahap jadi Sp3k/Akad (admin tetap bisa edit manual); marketing tidak bisa set Sp3k/Akad (403) & tgl SP3K/Akad dikunci
+- Catatan proses per update tahap (`catatan_update` → `keterangan_tahap` di record + `catatan` di riwayat), opsional. Tampil di kartu & modal Riwayat
+- Branding: nama aplikasi **LBT One**, logo/emblem PT Lider Bahtera Toolsindo (assets/images/logo-lbt.png, emblem.png, icon, adaptive-icon, favicon, splash putih), title web "LBT One"
+
 ## Backlog
-- Import data existing dari 4 Google Sheets (menunggu link dari user)
+- Import data existing dari 4 Google Sheets: link yang dikirim user masih butuh login Google (401). Minta user set sharing "Anyone with the link → Viewer" atau upload file .xlsx/.csv
 
 ## Status: Iterasi 2 Complete

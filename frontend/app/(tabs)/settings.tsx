@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Icon from "@react-native-vector-icons/ionicons";
 import { useAuth, roleLabel } from "@/src/auth-context";
+import { PasswordModal } from "@/src/components/password-modal";
 import { colors, spacing, radius } from "@/src/theme";
 
 export default function More() {
@@ -11,6 +12,7 @@ export default function More() {
   const { user, logout } = useAuth();
   const router = useRouter();
   const isAdmin = user?.role === "admin_utama";
+  const [pwdOpen, setPwdOpen] = useState(false);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -20,6 +22,7 @@ export default function More() {
       </View>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: 120 }}>
         <Row icon="list" label="Tabel Gabungan Unit" onPress={() => router.push("/tabel-unit")} testID="go-table" />
+        <Row icon="key" label="Ubah Password" onPress={() => setPwdOpen(true)} testID="go-change-password" />
         {isAdmin && (
           <>
             <Text style={styles.sectionTitle}>Admin Utama</Text>
@@ -34,6 +37,7 @@ export default function More() {
           <Text style={[styles.rowLabel, { color: colors.error }]}>Keluar</Text>
         </Pressable>
       </ScrollView>
+      <PasswordModal visible={pwdOpen} onClose={() => setPwdOpen(false)} />
     </View>
   );
 }

@@ -34,11 +34,15 @@ export const api = {
   login: (username: string, password: string) =>
     request("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   me: () => request("/api/auth/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    request("/api/auth/password", { method: "POST", body: JSON.stringify({ current_password, new_password }) }),
 
   // users
   listUsers: () => request("/api/users"),
   createUser: (data: any) => request("/api/users", { method: "POST", body: JSON.stringify(data) }),
   deleteUser: (u: string) => request(`/api/users/${u}`, { method: "DELETE" }),
+  resetPassword: (u: string, new_password: string) =>
+    request(`/api/users/${u}/password`, { method: "POST", body: JSON.stringify({ new_password }) }),
 
   // settings
   getList: (key: string) => request(`/api/settings/lists/${key}`),

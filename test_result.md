@@ -138,3 +138,7 @@ frontend:
   - task: "Kelola User: role Marketing + pilih nama marketing"
     implemented: true
     working: "NA"
+
+## Iteration 3 - Password, filter jatuh tempo, cari dokumen, cabang pemroses, aturan SP3K/Akad
+backend (semua lolos python smoke di chat): POST /api/auth/password, POST /api/users/{u}/password (admin_utama), list `branches`, KprIn.cabang_pemroses, apply_stage_rules (marketing 403 untuk tahap Sp3k/Akad & tgl SP3K/Akad dikunci; autofill tgl saat tahap jadi Sp3k/Akad)
+frontend (perlu diuji): PasswordModal (Lainnya > Ubah Password; Kelola User > ikon kunci reset), chip filter KPR (filter-all, filter-SEGERA, filter-PROSES...), field Cabang Pemroses di form, marketing tidak melihat opsi Sp3k/Akad & field tanggal, LegalDocs search (legal-doc-search) + chip jenis, Pengaturan list "Cabang Pemroses"

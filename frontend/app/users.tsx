@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Icon from "@react-native-vector-icons/ionicons";
 import { api } from "@/src/api";
 import { colors, spacing, radius } from "@/src/theme";
+import { PasswordModal } from "@/src/components/password-modal";
 
 const ROLES = [
   { value: "admin_utama", label: "Admin Utama" },
@@ -24,6 +25,7 @@ export default function Users() {
   const [form, setForm] = useState({ username: "", password: "", name: "", role: "admin_kpr", marketing_name: "" });
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [resetFor, setResetFor] = useState<string | null>(null);
 
   const create = async () => {
     setErr(null); setSaving(true);
@@ -89,10 +91,14 @@ export default function Users() {
                   <Icon name="trash" size={18} color={colors.error} />
                 </Pressable>
               )}
+              <Pressable testID={`reset-pwd-${u.username}`} onPress={() => setResetFor(u.username)} hitSlop={8} style={{ marginLeft: spacing.md }}>
+                <Icon name="key" size={18} color={colors.brandPrimary} />
+              </Pressable>
             </View>
           ))}
         </View>
       </ScrollView>
+      <PasswordModal visible={!!resetFor} targetUsername={resetFor} onClose={() => setResetFor(null)} />
     </View>
   );
 }

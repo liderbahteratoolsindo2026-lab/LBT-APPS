@@ -69,17 +69,17 @@ def _kpi_rows(ctx: dict):
 
 
 def _kpr_table(ctx: dict):
-    head = ["No", "Nama Konsumen", "Blok", "Marketing", "Bank", "Tgl Booking",
+    head = ["No", "Nama Konsumen", "Blok", "Marketing", "Bank", "Cabang", "Tgl Booking",
             "Tahap", "Status", "Tgl SP3K", "Tgl Akad", "Sisa Hari", "Keterangan"]
     rows = []
     for i, r in enumerate(sorted(ctx["kpr_rows"], key=lambda x: x.get("tanggal_booking") or ""), 1):
         sisa = r.get("days_to_pemutihan")
         rows.append([
             i, r.get("nama_konsumen", ""), r.get("blok_kavling", ""), r.get("marketing", ""),
-            r.get("bank_pemroses", ""), r.get("tanggal_booking", ""), r.get("tahap_saat_ini", ""),
+            r.get("bank_pemroses", ""), r.get("cabang_pemroses", "") or "-", r.get("tanggal_booking", ""), r.get("tahap_saat_ini", ""),
             r.get("status", ""), r.get("tanggal_sp3k") or "-", r.get("tanggal_akad") or "-",
             sisa if (r.get("status") == "PROSES" and sisa is not None) else "-",
-            r.get("keterangan", "") or "",
+            " | ".join(x for x in (r.get("keterangan_tahap") or "", r.get("keterangan") or "") if x),
         ])
     return head, rows
 
@@ -228,7 +228,7 @@ def build_pdf(ctx: dict) -> bytes:
         story.append(_pdf_table(*_bank_table(ctx), font_size=8))
         story.append(Paragraph("Daftar Berkas KPR", h2))
         head, rows = _kpr_table(ctx)
-        widths = [W * w for w in (0.03, 0.14, 0.06, 0.09, 0.07, 0.08, 0.09, 0.08, 0.08, 0.08, 0.05, 0.15)]
+        widths = [W * w for w in (0.03, 0.13, 0.06, 0.08, 0.06, 0.07, 0.08, 0.08, 0.08, 0.08, 0.08, 0.05, 0.12)]
         story.append(_pdf_table(head, rows, col_widths=widths))
 
     if "unit" in sections:

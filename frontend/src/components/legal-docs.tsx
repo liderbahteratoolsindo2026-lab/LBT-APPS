@@ -31,7 +31,16 @@ export function LegalDocs({ scope, blok, editable }: Props) {
     queryFn: () => api.getList("legality_doc_types"),
     enabled: editable,
   });
-  const docs: any[] = docsQ.data || [];
+  const allDocs: any[] = docsQ.data || [];
+  const [search, setSearch] = useState("");
+  const [jenisFilter, setJenisFilter] = useState("");
+  const jenisInDocs = Array.from(new Set(allDocs.map((d) => d.jenis).filter(Boolean))) as string[];
+  const docs = allDocs.filter((d) => {
+    if (jenisFilter && d.jenis !== jenisFilter) return false;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [d.jenis, d.nama_file, d.catatan, d.uploaded_name].some((v) => (v || "").toLowerCase().includes(q));
+  });
   const types: string[] = (typesQ.data?.items || []).map((i: any) => i.name);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["legal_docs", scope, blok || ""] });
@@ -89,12 +98,46 @@ export function LegalDocs({ scope, blok, editable }: Props) {
   return (
     <View style={styles.wrap} testID={`legal-docs-${scope}-${blok || "project"}`}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={styles.title}>Dokumen Scan / Foto ({docs.length})</Text>
+        <Text style={styles.title}>Dokumen Scan / Foto ({docs.length}{docs.length !== allDocs.length ? `/${allDocs.length}` : ""})</Text>
         {docsQ.isFetching && <ActivityIndicator size="small" color={colors.brandPrimary} />}
       </View>
 
-      {docs.length === 0 && !docsQ.isLoading && (
+      {allDocs.length > 0 && (
+        <>
+          <View style={styles.searchRow}>
+            <Icon name="search" size={16} color={colors.muted} />
+            <TextInput
+              testID="legal-doc-search"
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Cari dokumen (jenis, nama file, catatan)"
+              placeholderTextColor={colors.muted}
+              style={styles.searchInput}
+            />
+            {!!search && (
+              <Pressable onPress={() => setSearch("")} hitSlop={8}><Icon name="close-circle" size={16} color={colors.muted} /></Pressable>
+            )}
+          </View>
+          {jenisInDocs.length > 1 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 2 }}>
+              <Pressable onPress={() => setJenisFilter("")} style={[styles.chip, !jenisFilter && styles.chipActive]} testID="legal-doc-filter-all">
+                <Text style={[styles.chipText, !jenisFilter && styles.chipTextActive]}>Semua</Text>
+              </Pressable>
+              {jenisInDocs.map((j) => (
+                <Pressable key={j} onPress={() => setJenisFilter(j)} style={[styles.chip, jenisFilter === j && styles.chipActive]} testID={`legal-doc-filter-${j}`}>
+                  <Text style={[styles.chipText, jenisFilter === j && styles.chipTextActive]}>{j}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+        </>
+      )}
+
+      {allDocs.length === 0 && !docsQ.isLoading && (
         <Text style={styles.empty}>Belum ada dokumen diunggah</Text>
+      )}
+      {allDocs.length > 0 && docs.length === 0 && (
+        <Text style={styles.empty}>Tidak ada dokumen yang cocok dengan pencarian</Text>
       )}
       {docs.map((d) => {
         const isPdf = (d.content_type || "").includes("pdf");
@@ -175,6 +218,11 @@ const styles = StyleSheet.create({
   wrap: { gap: spacing.sm, marginTop: spacing.sm },
   title: { fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary, textTransform: "uppercase", letterSpacing: 0.3 },
   empty: { fontSize: 12, color: colors.muted, paddingVertical: spacing.sm },
+  searchRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm, paddingHorizontal: spacing.md, height: 40, borderWidth: 1, borderColor: colors.border,
+  },
+  searchInput: { flex: 1, color: colors.onSurface, fontSize: 13, outlineWidth: 0 as any },
   docRow: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm, padding: spacing.sm,

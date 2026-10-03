@@ -10,6 +10,7 @@ import { colors, spacing, radius } from "@/src/theme";
 const LIST_CONFIGS: { key: string; title: string; hasPercent?: boolean }[] = [
   { key: "marketing", title: "Marketing" },
   { key: "banks", title: "Bank Pemroses" },
+  { key: "branches", title: "Cabang Pemroses" },
   { key: "kpr_stages", title: "Tahapan Berkas KPR" },
   { key: "construction_stages", title: "Tahapan Konstruksi", hasPercent: true },
   { key: "legality_status", title: "Status Dokumen Legalitas" },

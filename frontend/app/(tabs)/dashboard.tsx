@@ -76,7 +76,11 @@ export default function Dashboard() {
           />
           <View style={[styles.heroContent, { paddingTop: insets.top + spacing.lg }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <View style={{ flex: 1 }}>
+              <View style={styles.emblemBox} testID="dashboard-emblem">
+                <Image source={require("../../assets/images/emblem.png")} style={{ width: 44, height: 44 }} contentFit="contain" />
+              </View>
+              <View style={{ flex: 1, marginLeft: spacing.md }}>
+                <Text style={styles.appName}>LBT One</Text>
                 <Text style={styles.companyText}>{companyName}</Text>
                 <Text style={styles.projectText}>{projectName}</Text>
                 <View style={styles.roleChip}>
@@ -275,7 +279,9 @@ function UnitStat({ label, value, tone }: any) {
 }
 
 const styles = StyleSheet.create({
-  hero: { height: 220, position: "relative" },
+  hero: { height: 240, position: "relative" },
+  emblemBox: { width: 56, height: 56, borderRadius: radius.md, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  appName: { color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: "700", letterSpacing: 1.2, textTransform: "uppercase" },
   heroContent: { flex: 1, paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, justifyContent: "space-between" },
   companyText: { color: "rgba(255,255,255,0.85)", fontSize: 12, fontWeight: "500" },
   projectText: { color: "#FFF", fontSize: 24, fontWeight: "800", marginTop: 2 },

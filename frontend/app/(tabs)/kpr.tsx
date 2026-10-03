@@ -20,6 +20,7 @@ export default function KprScreen() {
   const editable = canEdit(user?.role, "kpr");
   const qc = useQueryClient();
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Kpr | null>(null);
   const [historyOf, setHistoryOf] = useState<Kpr | null>(null);
@@ -44,13 +45,30 @@ export default function KprScreen() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return data;
-    return data.filter((r: Kpr) =>
-      (r.nama_konsumen || "").toLowerCase().includes(q) ||
-      (r.blok_kavling || "").toLowerCase().includes(q) ||
-      (r.marketing || "").toLowerCase().includes(q)
-    );
-  }, [data, query]);
+    return data.filter((r: Kpr) => {
+      if (statusFilter === "SEGERA") {
+        if (!(r.status === "PROSES" && r.days_to_pemutihan !== null && r.days_to_pemutihan <= 3)) return false;
+      } else if (statusFilter && r.status !== statusFilter) return false;
+      if (!q) return true;
+      return (r.nama_konsumen || "").toLowerCase().includes(q) ||
+        (r.blok_kavling || "").toLowerCase().includes(q) ||
+        (r.marketing || "").toLowerCase().includes(q) ||
+        (r.cabang_pemroses || "").toLowerCase().includes(q);
+    });
+  }, [data, query, statusFilter]);
+
+  const segeraCount = useMemo(
+    () => data.filter((r: Kpr) => r.status === "PROSES" && r.days_to_pemutihan !== null && r.days_to_pemutihan <= 3).length,
+    [data]);
+
+  const FILTERS: { key: string; label: string; tone?: string }[] = [
+    { key: "", label: "Semua" },
+    { key: "SEGERA", label: `Segera Diputihkan${segeraCount ? ` (${segeraCount})` : ""}`, tone: "error" },
+    { key: "PROSES", label: "Proses" },
+    { key: "SP3K", label: "SP3K" },
+    { key: "DONE", label: "Done" },
+    { key: "DIPUTIHKAN", label: "Diputihkan" },
+  ];
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -83,6 +101,19 @@ export default function KprScreen() {
             style={styles.search}
           />
         </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+          {FILTERS.map((f) => {
+            const active = statusFilter === f.key;
+            const isErr = f.tone === "error";
+            return (
+              <Pressable key={f.key || "all"} testID={`filter-${f.key || "all"}`} onPress={() => setStatusFilter(f.key)}
+                style={[styles.chip, { height: 32 }, active && (isErr ? styles.chipActiveErr : styles.chipActive)]}>
+                {isErr && <Icon name="warning" size={12} color={active ? colors.onError : colors.error} />}
+                <Text style={[styles.chipText, isErr && !active && { color: colors.error }, active && styles.chipTextActive]}>{f.label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {actionErr && (
@@ -113,7 +144,7 @@ export default function KprScreen() {
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={styles.name}>{item.nama_konsumen}</Text>
-                  <Text style={styles.meta}>Blok {item.blok_kavling} · {item.bank_pemroses}</Text>
+                  <Text style={styles.meta}>Blok {item.blok_kavling} · {item.bank_pemroses}{item.cabang_pemroses ? ` ${item.cabang_pemroses}` : ""}</Text>
                   <Text style={styles.meta}>Marketing: {item.marketing}</Text>
                 </View>
                 <Badge label={item.status} kind={statusToKind(item.status)} />
@@ -126,7 +157,15 @@ export default function KprScreen() {
                     Sisa: <Text style={styles.footBold}>{item.days_to_pemutihan} hari</Text>
                   </Text>
                 )}
+                {!!item.tanggal_sp3k && <Text style={styles.footText}>SP3K: <Text style={styles.footBold}>{item.tanggal_sp3k}</Text></Text>}
+                {!!item.tanggal_akad && <Text style={styles.footText}>Akad: <Text style={styles.footBold}>{item.tanggal_akad}</Text></Text>}
               </View>
+              {!!item.keterangan_tahap && (
+                <View style={styles.noteRow} testID={`note-${item.blok_kavling}`}>
+                  <Icon name="chatbubble-ellipses-outline" size={13} color={colors.onBrandSecondary} />
+                  <Text style={styles.noteText}>{item.keterangan_tahap}</Text>
+                </View>
+              )}
               {item.status === "DIPUTIHKAN" && (
                 <View style={styles.putihInfo} testID={`putih-info-${item.blok_kavling}`}>
                   <Icon name="refresh-circle" size={14} color={colors.error} />
@@ -296,7 +335,7 @@ function HistoryModal({ kpr, onClose }: any) {
                         <Text style={styles.histTime}>{formatDateTime(h.waktu)}</Text>
                       </View>
                       <Text style={styles.histBy}>oleh {h.nama || h.oleh}</Text>
-                      {!!h.catatan && <Text style={styles.histChange}>Alasan: {h.catatan}</Text>}
+                      {!!h.catatan && <Text style={styles.histChange}>{h.aksi === "DIPUTIHKAN" ? "Alasan" : "Catatan"}: {h.catatan}</Text>}
                       {(h.perubahan || []).map((p: any, i: number) => (
                         <Text key={i} style={styles.histChange}>
                           <Text style={{ fontWeight: "700" }}>{p.field}: </Text>
@@ -321,23 +360,31 @@ function KprFormModal({ visible, onClose, editing, onSaved, user }: any) {
   const isMarketing = user?.role === "marketing";
   const ownMarketing = isMarketing ? user?.marketing_name || "" : "";
   const [form, setForm] = useState<any>({
-    nama_konsumen: "", blok_kavling: "", marketing: "", bank_pemroses: "",
+    nama_konsumen: "", blok_kavling: "", marketing: "", bank_pemroses: "", cabang_pemroses: "",
     tanggal_booking: "", tahap_saat_ini: "", tanggal_sp3k: "", tanggal_akad: "", keterangan: "",
   });
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   React.useEffect(() => {
-    if (editing) setForm({ ...editing, tanggal_sp3k: editing.tanggal_sp3k || "", tanggal_akad: editing.tanggal_akad || "" });
-    else setForm({ nama_konsumen: "", blok_kavling: "", marketing: ownMarketing, bank_pemroses: "",
-      tanggal_booking: new Date().toISOString().slice(0, 10), tahap_saat_ini: "", tanggal_sp3k: "", tanggal_akad: "", keterangan: "" });
+    if (editing) setForm({ ...editing, cabang_pemroses: editing.cabang_pemroses || "", tanggal_sp3k: editing.tanggal_sp3k || "", tanggal_akad: editing.tanggal_akad || "", catatan_update: editing.keterangan_tahap || "" });
+    else setForm({ nama_konsumen: "", blok_kavling: "", marketing: ownMarketing, bank_pemroses: "", cabang_pemroses: "",
+      tanggal_booking: new Date().toISOString().slice(0, 10), tahap_saat_ini: "", tanggal_sp3k: "", tanggal_akad: "", keterangan: "", catatan_update: "" });
     setErr(null);
   }, [editing, visible, ownMarketing]);
 
   const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing"), enabled: visible && !isMarketing });
   const banksQ = useQuery({ queryKey: ["list", "banks"], queryFn: () => api.getList("banks"), enabled: visible });
+  const branchesQ = useQuery({ queryKey: ["list", "branches"], queryFn: () => api.getList("branches"), enabled: visible });
   const stagesQ = useQuery({ queryKey: ["list", "kpr_stages"], queryFn: () => api.getList("kpr_stages"), enabled: visible });
   const availQ = useQuery({ queryKey: ["units_available"], queryFn: () => api.availableUnits(), enabled: visible && !editing });
+
+  const isFinalStage = (name: string) => ["sp3k", "akad"].includes((name || "").trim().toLowerCase());
+  const stageOptions = (stagesQ.data?.items || [])
+    .filter((i: any) => !isMarketing || !isFinalStage(i.name))
+    .map((i: any) => ({ label: i.name, value: i.name }));
+  const stageIsSp3k = (form.tahap_saat_ini || "").trim().toLowerCase() === "sp3k";
+  const stageIsAkad = (form.tahap_saat_ini || "").trim().toLowerCase() === "akad";
 
   const save = async () => {
     setErr(null); setSaving(true);
@@ -397,12 +444,32 @@ function KprFormModal({ visible, onClose, editing, onSaved, user }: any) {
               <SelectField label="Bank Pemroses" value={form.bank_pemroses}
                 options={(banksQ.data?.items || []).map((i: any) => ({ label: i.name, value: i.name }))}
                 onChange={(v) => setForm({ ...form, bank_pemroses: v })} />
+              <SelectField label="Cabang Pemroses" value={form.cabang_pemroses}
+                options={(branchesQ.data?.items || []).map((i: any) => ({ label: i.name, value: i.name }))}
+                onChange={(v) => setForm({ ...form, cabang_pemroses: v })} />
               <Field label="Tanggal Booking (YYYY-MM-DD)" value={form.tanggal_booking} onChange={(v) => setForm({ ...form, tanggal_booking: v })} />
               <SelectField label="Tahap Saat Ini" value={form.tahap_saat_ini}
-                options={(stagesQ.data?.items || []).map((i: any) => ({ label: i.name, value: i.name }))}
+                options={stageOptions}
                 onChange={(v) => setForm({ ...form, tahap_saat_ini: v })} />
-              <Field label="Tanggal SP3K (opsional)" value={form.tanggal_sp3k} onChange={(v) => setForm({ ...form, tanggal_sp3k: v })} />
-              <Field label="Tanggal Akad (opsional)" value={form.tanggal_akad} onChange={(v) => setForm({ ...form, tanggal_akad: v })} />
+              <Field label={`Catatan Proses${form.tahap_saat_ini ? ` ${form.tahap_saat_ini}` : ""} (opsional)`}
+                value={form.catatan_update}
+                onChange={(v) => setForm({ ...form, catatan_update: v })}
+                placeholder="mis. menunggu konfirmasi dari bank"
+                multiline testID="kpr-catatan-input" />
+              {isMarketing ? (
+                <View style={styles.infoBox}>
+                  <Icon name="information-circle-outline" size={16} color={colors.onBrandSecondary} />
+                  <Text style={styles.infoText}>Tahap SP3K & Akad serta tanggalnya hanya bisa diubah oleh Admin KPR.
+                    {editing?.tanggal_sp3k ? ` SP3K: ${editing.tanggal_sp3k}.` : ""}{editing?.tanggal_akad ? ` Akad: ${editing.tanggal_akad}.` : ""}</Text>
+                </View>
+              ) : (
+                <>
+                  <Field label={`Tanggal SP3K${stageIsSp3k && !form.tanggal_sp3k ? " (otomatis hari ini)" : " (opsional)"}`}
+                    value={form.tanggal_sp3k} onChange={(v) => setForm({ ...form, tanggal_sp3k: v })} />
+                  <Field label={`Tanggal Akad${stageIsAkad && !form.tanggal_akad ? " (otomatis hari ini)" : " (opsional)"}`}
+                    value={form.tanggal_akad} onChange={(v) => setForm({ ...form, tanggal_akad: v })} />
+                </>
+              )}
               <Field label="Keterangan" value={form.keterangan} onChange={(v) => setForm({ ...form, keterangan: v })} multiline />
             </ScrollView>
             {err && (
@@ -421,7 +488,7 @@ function KprFormModal({ visible, onClose, editing, onSaved, user }: any) {
   );
 }
 
-export function Field({ label, value, onChange, multiline, testID }: any) {
+export function Field({ label, value, onChange, multiline, testID, placeholder }: any) {
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -430,6 +497,7 @@ export function Field({ label, value, onChange, multiline, testID }: any) {
         value={value || ""}
         onChangeText={onChange}
         multiline={multiline}
+        placeholder={placeholder}
         style={[styles.fieldInput, multiline && { height: 70, textAlignVertical: "top" }]}
         placeholderTextColor={colors.muted}
       />
@@ -479,6 +547,8 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", gap: spacing.sm, marginTop: 4, flexWrap: "wrap" },
   putihInfo: { flexDirection: "row", alignItems: "flex-start", gap: 6, backgroundColor: "#FEF2F2", padding: spacing.sm, borderRadius: radius.sm },
   putihText: { flex: 1, fontSize: 11, color: colors.error, lineHeight: 15 },
+  noteRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, backgroundColor: colors.brandSecondary, padding: spacing.sm, borderRadius: radius.sm },
+  noteText: { flex: 1, fontSize: 12, color: colors.onBrandSecondary, lineHeight: 16 },
   actionBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     backgroundColor: colors.brandSecondary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill,
@@ -504,10 +574,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: 10, color: colors.onSurface, fontSize: 14,
     borderWidth: 1, borderColor: colors.border, outlineWidth: 0 as any,
   },
-  chip: { paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  chip: { flexDirection: "row", gap: 4, paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  chipActiveErr: { backgroundColor: colors.error, borderColor: colors.error },
   chipText: { fontSize: 12, color: colors.onSurface, fontWeight: "600" },
   chipTextActive: { color: colors.onBrandPrimary },
+  infoBox: { flexDirection: "row", gap: spacing.sm, backgroundColor: colors.brandSecondary, padding: spacing.md, borderRadius: radius.sm, marginBottom: spacing.md, alignItems: "flex-start" },
+  infoText: { flex: 1, fontSize: 12, color: colors.onBrandSecondary, lineHeight: 17 },
   errorBox: { flexDirection: "row", gap: spacing.sm, backgroundColor: "#FEE2E2", padding: spacing.md, borderRadius: radius.sm, marginVertical: spacing.sm, alignItems: "center" },
   saveBtn: { backgroundColor: colors.brandPrimary, height: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center", marginTop: spacing.sm },
   saveBtnText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },

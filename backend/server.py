@@ -147,11 +147,20 @@ class KprIn(BaseModel):
     blok_kavling: str
     marketing: str
     bank_pemroses: str
+    cabang_pemroses: str = ""
     tanggal_booking: str  # ISO date
     tahap_saat_ini: str
     tanggal_sp3k: Optional[str] = None
     tanggal_akad: Optional[str] = None
     keterangan: str = ""
+    catatan_update: str = ""  # catatan proses untuk tahap saat ini (opsional), dicatat ke riwayat
+
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6, max_length=72)
+
+class ResetPasswordIn(BaseModel):
+    new_password: str = Field(..., min_length=6, max_length=72)
 
 class UnitIn(BaseModel):
     blok_kavling: str
@@ -247,6 +256,7 @@ async def log_kpr_history(kpr_id: str, user: dict, aksi: str, perubahan: list, c
 KPR_TRACKED_FIELDS = {
     "tahap_saat_ini": "Tahap",
     "bank_pemroses": "Bank",
+    "cabang_pemroses": "Cabang",
     "tanggal_sp3k": "Tgl SP3K",
     "tanggal_akad": "Tgl Akad",
     "tanggal_booking": "Tgl Booking",
@@ -276,6 +286,7 @@ async def seed_defaults():
     defaults = {
         "marketing": [{"name": n, "order": i} for i, n in enumerate(["Rina", "Budi", "Siti", "Agus"])],
         "banks": [{"name": n, "order": i} for i, n in enumerate(["BTN", "BRI", "BNI", "Mandiri", "BJB"])],
+        "branches": [{"name": n, "order": i} for i, n in enumerate(["Subang", "Bekasi", "Purwakarta"])],
         "kpr_stages": [{"name": n, "order": i} for i, n in enumerate(
             ["Pemberkasan", "Entry", "Dvo", "Ots", "Analis", "Approval", "Banding", "Reject", "Sp3k", "Akad"])],
         "construction_stages": [
@@ -443,6 +454,25 @@ async def login(data: LoginIn):
 async def me(user=Depends(current_user)):
     return user
 
+@api_router.post("/auth/password")
+async def change_own_password(body: ChangePasswordIn, user=Depends(current_user)):
+    doc = await db.users.find_one({"username": user["username"]}, {"password_hash": 1})
+    if not doc or not verify_password(body.current_password, doc["password_hash"]):
+        raise HTTPException(400, "Password saat ini salah")
+    if verify_password(body.new_password, doc["password_hash"]):
+        raise HTTPException(400, "Password baru harus berbeda dari password lama")
+    await db.users.update_one({"username": user["username"]},
+                              {"$set": {"password_hash": hash_password(body.new_password)}})
+    return {"ok": True}
+
+@api_router.post("/users/{username}/password")
+async def admin_reset_password(username: str, body: ResetPasswordIn, _=Depends(require_roles("admin_utama"))):
+    res = await db.users.update_one({"username": username},
+                                    {"$set": {"password_hash": hash_password(body.new_password)}})
+    if res.matched_count != 1:
+        raise HTTPException(404, "User tidak ditemukan")
+    return {"ok": True}
+
 # ============== Users (Admin Utama) ==============
 @api_router.get("/users")
 async def list_users(_=Depends(require_roles("admin_utama"))):
@@ -506,6 +536,27 @@ async def list_kpr(_=Depends(current_user)):
         await compute_kpr_status(r)
     return rows
 
+async def apply_stage_rules(user: dict, new_data: dict, existing: Optional[dict]) -> dict:
+    """Aturan tahap: marketing tidak boleh set SP3K/Akad & tidak boleh ubah tgl SP3K/Akad.
+    Tgl SP3K / Akad terisi otomatis saat tahap berubah ke SP3K / Akad (jika kosong)."""
+    stage = (new_data.get("tahap_saat_ini") or "").strip().lower()
+    if user["role"] == "marketing":
+        if stage in ("sp3k", "akad"):
+            raise HTTPException(403, "Tahap SP3K dan Akad hanya bisa diubah oleh Admin KPR")
+        new_data["tanggal_sp3k"] = (existing or {}).get("tanggal_sp3k")
+        new_data["tanggal_akad"] = (existing or {}).get("tanggal_akad")
+        return new_data
+    today = date.today().isoformat()
+    prev_stage = ((existing or {}).get("tahap_saat_ini") or "").strip().lower()
+    if stage == "sp3k" and not new_data.get("tanggal_sp3k") and prev_stage != "sp3k":
+        new_data["tanggal_sp3k"] = today
+    if stage == "akad":
+        if not new_data.get("tanggal_akad") and prev_stage != "akad":
+            new_data["tanggal_akad"] = today
+        if not new_data.get("tanggal_sp3k"):
+            new_data["tanggal_sp3k"] = (existing or {}).get("tanggal_sp3k") or today
+    return new_data
+
 @api_router.post("/kpr")
 async def create_kpr(data: KprIn, user=Depends(require_roles(*KPR_EDITORS))):
     assert_marketing_scope(user, data.marketing)
@@ -520,13 +571,16 @@ async def create_kpr(data: KprIn, user=Depends(require_roles(*KPR_EDITORS))):
     if active:
         raise HTTPException(400, f"Unit sudah dipakai konsumen: {active['nama_konsumen']}")
     rec = data.dict()
+    catatan = (rec.pop("catatan_update", "") or "").strip()
+    rec["keterangan_tahap"] = catatan
+    rec = await apply_stage_rules(user, rec, None)
     rec["id"] = str(uuid.uuid4())
     rec["tanggal_update_terakhir"] = datetime.now(timezone.utc).isoformat()
     rec["created_by"] = user["username"]
     await db.kpr.insert_one(rec)
     rec.pop("_id", None)
     await log_kpr_history(rec["id"], user, "DIBUAT",
-                          [{"field": "Tahap", "dari": None, "ke": rec["tahap_saat_ini"]}])
+                          [{"field": "Tahap", "dari": None, "ke": rec["tahap_saat_ini"]}], catatan=catatan)
     return rec
 
 @api_router.put("/kpr/{kpr_id}")
@@ -537,15 +591,21 @@ async def update_kpr(kpr_id: str, data: KprIn, user=Depends(require_roles(*KPR_E
     assert_marketing_scope(user, existing.get("marketing"))
     assert_marketing_scope(user, data.marketing)
     new_data = data.dict()
+    catatan = (new_data.pop("catatan_update", "") or "").strip()
+    new_data = await apply_stage_rules(user, new_data, existing)
     changes = []
     for f, label in KPR_TRACKED_FIELDS.items():
         if (new_data.get(f) or None) != (existing.get(f) or None):
             changes.append({"field": label, "dari": existing.get(f), "ke": new_data.get(f)})
-    if new_data.get("tahap_saat_ini") != existing.get("tahap_saat_ini"):
+    stage_changed = new_data.get("tahap_saat_ini") != existing.get("tahap_saat_ini")
+    note_changed = catatan != (existing.get("keterangan_tahap") or "")
+    if stage_changed or note_changed:
+        new_data["keterangan_tahap"] = catatan
+    if stage_changed:
         new_data["tanggal_update_terakhir"] = datetime.now(timezone.utc).isoformat()
     await db.kpr.update_one({"id": kpr_id}, {"$set": new_data})
-    if changes:
-        await log_kpr_history(kpr_id, user, "DIUBAH", changes)
+    if changes or (note_changed and catatan):
+        await log_kpr_history(kpr_id, user, "DIUBAH", changes, catatan=catatan if (stage_changed or note_changed) else "")
     return {"ok": True}
 
 @api_router.get("/kpr/{kpr_id}/history")

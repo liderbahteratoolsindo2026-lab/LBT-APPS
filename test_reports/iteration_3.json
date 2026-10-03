@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 3 features all PASS (backend 15/15 + regression 44/44; frontend end-to-end on mobile 390x844). Backend verified: POST /api/auth/password returns 400 for wrong current + 400 for same password + 422 for <6 chars + 200 happy path (password restored to Admin@123); POST /api/users/{username}/password gated to admin_utama only (403 for admin_kpr/marketing, 404 for unknown user, 200 for admin resetting kpr1 then restoring Kpr@123); GET /api/settings/lists/branches seeds Subang/Bekasi/Purwakarta; POST/PUT /api/kpr accepts cabang_pemroses; marketing PUT tahap 'Sp3k' => 403; admin_kpr PUT 'Sp3k' without tanggal_sp3k => record.tanggal_sp3k auto set to today (2026-10-03) and history logs field 'Tgl SP3K'; same for 'Akad' with 'Tgl Akad'. Frontend verified via Playwright (admin + rina_mkt): Lainnya > Ubah Password (go-change-password) opens password-modal; mismatch confirm shows 'Konfirmasi password tidak sama'; same password shows 'Password baru harus berbeda'; happy path pwd-success toast, password restored to Admin@123; Lainnya > Kelola User shows reset-pwd-{username} key icon for every user; reset modal for kpr1 omits pwd-current and successfully sets Kpr@1234 (login verified) then restored. Berkas KPR tab exposes filter chips filter-all/SEGERA/PROSES/SP3K/DONE/DIPUTIHKAN all visible & clickable. Add KPR form has 'CABANG PEMROSES' section with chips Subang/Bekasi/Purwakarta; saved card renders 'BTN Subang' (bank + cabang). Admin edited berkas, selected tahap 'Sp3k' => label changed to 'Tanggal SP3K (otomatis hari ini)'; after save, kpr-card shows badge 'SP3K', 'Tahap: Sp3k', 'SP3K: 2026-10-03'; Riwayat modal shows 'Tahap: Entry → Sp3k' and 'Tgl SP3K: 2026-10-03'. Marketing (rina_mkt) form: info box 'Tahap SP3K & Akad serta tanggalnya hanya bisa diubah oleh Admin KPR' present; no 'Tanggal SP3K'/'Tanggal Akad' field; stage chips do NOT expose 'Sp3k' (count=0). Marketing Lainnya menu: has 'Ubah Password', no 'Kelola User', no 'Pengaturan Aplikasi'. Legalitas unit A-02: legal-doc-search + legal-doc-filter-all/Sertifikat/PBB visible after >=2 docs with different jenis uploaded; search 'PBB' filters to 1 Sertifikat chip filters to 1 (verified via DOM count of legal-doc-{id}). Pengaturan Aplikasi (admin) lists 'Cabang Pemroses' sebagai referensi yang bisa dikelola. Credentials all restored (admin/Admin@123, kpr1/Kpr@123, rina_mkt/Rina@123, bgn1/Bgn@123). Test KPR + test legalitas docs cleaned (0 KPR leftover). No red screen / React Native errors. Only console noise: pre-login 401s (expected) and benign 'shadow* style props deprecated' warning from RN web. No deprecated Expo packages (expo-av/expo-barcode-scanner/expo-background-fetch) used.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Berkas KPR form", "issues": ["Modal 'Tambah Berkas KPR' sudah panjang (ScrollView maxHeight 500) — di layar 390x844 user harus scroll modal untuk mencapai tombol Simpan; acceptable namun bisa dioptimalkan dengan grouping bank+cabang pada satu baris."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_mahkota_kpr.py",
+    "/app/backend/tests/smoke_new_features.py",
+    "/app/test_reports/pytest/iter3_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py sudah ~1094 baris; disarankan dipecah ke routers/auth.py, routers/kpr.py, routers/legality.py, routers/users.py untuk maintainability (sudah dicatat di iterasi 2, masih relevan).",
+    "apply_stage_rules() di-share antara create & update namun untuk create existing=None sehingga logic 'prev_stage != sp3k' selalu True pada create — artinya saat admin membuat berkas langsung di tahap Sp3k, tanggal_sp3k juga akan ter-autofill hari ini (perilaku ini konsisten dengan requirement, hanya worth dicatat).",
+    "PUT /api/kpr/{id} mengembalikan {'ok': True} saja; UI me-refetch list setelahnya sehingga OK. Jika di iterasi mendatang ada kebutuhan menampilkan nilai hasil update langsung, pertimbangkan return record ter-update.",
+    "password-modal.tsx: validasi 'min. 6 karakter' hanya ditampilkan sebagai label; validasi client-side (length < 6) belum ada - backend tetap mem-protect dengan 422. Boleh ditambah agar UX lebih cepat."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (baru - 15 kasus uji fitur iterasi 3)"
+  ],
+  "success_rate": {"backend": "100% (15/15 test_iteration3 + 29/29 test_mahkota_kpr saat dijalankan sendiri; 44/46 pada full-suite run karena race xdist antar file bersaing untuk unit yang sama — produk tidak terdampak, hanya test parallelism)", "frontend": "100% (semua fitur iterasi 3 terverifikasi: ubah password, reset password admin, filter chips Berkas KPR, Cabang Pemroses, auto-tanggal SP3K/Akad, restriksi marketing, Legalitas search/filter, Pengaturan Cabang Pemroses)"},
+  "seed_data_creation": "Tidak ada seed residu. Berkas KPR uji (TEST Iter3 Admin, Blok A-02) sudah dihapus. Dokumen legalitas test_sert.pdf & test_pbb.pdf sudah dihapus. Semua password dikembalikan: admin=Admin@123, kpr1=Kpr@123, rina_mkt=Rina@123, bgn1=Bgn@123 (verified via API 200).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL: https://bangun-pantau-1.preview.emergentagent.com. Pengaturan menu label frontend sebenarnya 'Pengaturan Aplikasi' (bukan 'Pengaturan'). Tab bar belum punya testID — gunakan page.get_by_text('Lainnya'|'Berkas KPR'|'Legalitas'|'Bangunan'|'Dashboard', exact=True). Add KPR form field inputs tidak selalu punya testID — gunakan chip-text click untuk pilih Blok/Marketing/Bank/Cabang/Tahap. Hapus KPR memakai window.confirm — Playwright default auto-accept, tapi jika flaky gunakan page.on('dialog', lambda d: d.accept()). File picker web: page.set_input_files pada input[type=file] di modal legal-docs. Backend running on supervisor; restart: sudo supervisorctl restart backend. KPR auto-tanggal berjalan di apply_stage_rules() server.py:538-557. Password endpoints: /api/auth/password (self), /api/users/{username}/password (admin-only). Container date: Okt 2026 (verified: 2026-10-03). TestID baru iterasi 3: go-change-password, password-modal, pwd-current, pwd-new, pwd-confirm, pwd-submit, pwd-success, reset-pwd-{username}, filter-{all|SEGERA|PROSES|SP3K|DONE|DIPUTIHKAN}, legal-doc-search, legal-doc-filter-{all|{jenis}}.",
+  "rca_of_issue": "N/A — semua fitur iterasi 3 lolos uji backend dan frontend."
+}

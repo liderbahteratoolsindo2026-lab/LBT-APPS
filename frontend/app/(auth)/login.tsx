@@ -53,11 +53,11 @@ export default function Login() {
               style={StyleSheet.absoluteFill}
             />
             <View style={[styles.heroContent, { paddingTop: insets.top + spacing.xl }]}>
-              <View style={styles.logoBadge}>
-                <Icon name="home" size={28} color={colors.onBrandPrimary} />
+              <View style={styles.logoCard} testID="login-logo">
+                <Image source={require("../../assets/images/logo-lbt.png")} style={styles.logoImg} contentFit="contain" />
               </View>
-              <Text style={styles.brand}>Mahkota Graha</Text>
-              <Text style={styles.company}>PT Lider Bahtera Toolsindo</Text>
+              <Text style={styles.brand}>LBT One</Text>
+              <Text style={styles.company}>Monitoring KPR · Bangunan · Legalitas</Text>
             </View>
           </View>
 
@@ -129,13 +129,13 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  hero: { height: 260, backgroundColor: colors.brand, position: "relative" },
+  hero: { height: 300, backgroundColor: colors.brand, position: "relative" },
   heroContent: { flex: 1, paddingHorizontal: spacing.xl, justifyContent: "flex-end", paddingBottom: spacing.xl, gap: spacing.sm },
-  logoBadge: {
-    width: 52, height: 52, borderRadius: radius.md,
-    backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.3)",
+  logoCard: {
+    alignSelf: "flex-start", backgroundColor: "#FFFFFF", borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: spacing.xs,
   },
+  logoImg: { width: 220, height: 56 },
   brand: { color: "#FFFFFF", fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
   company: { color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: "500" },
   formCard: {

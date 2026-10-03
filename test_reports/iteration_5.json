@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 5 security fixes VERIFIED PASSING (20/20 pytest + full frontend regression). SEC-001 (marketing scope on READ): admin GET /api/kpr = 25 rows (HAWIG/ADIT/WIDA/SRI), mkt_adit GET /api/kpr = 10 rows all marketing='ADIT' (no leak); mkt_adit GET /api/dashboard -> kpi.total=10 and by_marketing contains only ADIT; mkt_adit GET /api/dashboard/combined-table -> every row with non-null nama_konsumen/marketing belongs to ADIT only, other units nama_konsumen=null & marketing=null; mkt_adit GET /api/kpr/{non-ADIT id}/history -> 403, own id -> 200. SEC-002 (Apple no email trust): POST /api/auth/apple {identity_token:'bogus', email:'admin@x.com'} -> 401; empty token -> 422; malformed 'a.b.c' -> 401. No path grants a token without a valid Apple-signed JWT whose own 'email' claim is used (client-supplied email ignored). SEC-005 (AI history IDOR): admin POST /api/ai/chat returns session_id; GET /api/ai/history?session_id=<admin sid> as mkt_adit returns [] (filtered by username on both insert AND query); admin reading own sid returns both user+assistant messages. SEC-003 (must_change_password mechanism): login response for admin + mkt_adit contains user.must_change_password=False (dev DB OK per credentials.md note); created TEST_pwd_user with role admin_bangunan, logged in, POST /api/auth/password changed password successfully, verified re-login with new password works. REGRESI 100% PASS: admin login OK; GET /api/kpr=25; AI claude+chatgpt both reply; GET /api/projects >=1; GET /api/dashboard/marketing?marketing=ADIT total=10; mkt_adit POST /api/users -> 403; mkt_adit POST /api/projects -> 403; mkt_adit POST /api/kpr with marketing='HAWIG' -> 403 (assert_marketing_scope). FRONTEND (390x844): admin login -> Dashboard renders 'Mahkota Graha I' chip and KPI tiles 'Total Berjalan 20', 'Pemberkasan 7', 'Proses 9', 'SP3K 5', 'Done (Akad) 5', 'Diputihkan 6', 'Perlu Tindak Lanjut 0', 'Jatuh Tempo 0'. Tap kpi-SP3K -> modal 'Berkas SP3K (belum akad) (5)' muncul dengan 5 baris (ALDI/DIMAS/ANGGI/RESYA/RESTI). Berkas KPR tab menampilkan filter chips termasuk 'Perlu Tindak Lanjut' (filter-MACET testID) dan filter-SEGERA/PROSES/SP3K/DONE/DIPUTIHKAN. Tidak ada red screen; hanya warning RN Web 'shadow* deprecated' (sudah dicatat di iterasi 4).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Multiple screens using legacy shadow* RN style props",
+       "issue": "RN Web console still warns '\"shadow*\" style props are deprecated. Use \"boxShadow\".' (not blocking, carried over from iteration 4). Reference: emitted from component styles across dashboard/kpr/ai/pengaturan/users."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5_security.py",
+    "/app/test_reports/pytest/iter5_results.xml"
+  ],
+  "action_items": [
+    "(Low, carried over) Migrate shadow* style props to boxShadow in RN Web styles to silence deprecation warnings.",
+    "(Low, carried over) Fix email unique index to partialFilterExpression {email:{$type:'string'}} to allow multiple users with no email (iteration 4 finding, still open)."
+  ],
+  "critical_code_review_comments": [
+    "SEC-001 fix (server.py:734, 1128-1129, 1331-1332, 820, 1450) correctly scopes all four READ endpoints + AI data context by marketing_name. Server-side authoritative filter — client cannot override.",
+    "SEC-002 fix (server.py:600-614) correctly reads 'email' only from verified Apple JWT claims (claims.get('email')); Pydantic model still accepts email from client body but value is simply ignored. Consider removing the field from AppleIn entirely to eliminate confusion.",
+    "SEC-005 fix (server.py:1465, 1488) filters ai_messages by {session_id, username}. Note: cross-user replay cannot leak since insert at 1479-1482 also tags username.",
+    "SEC-003 flag (server.py:321, 525, 541, 576): new seeded admins get must_change_password=True; existing admin in dev DB kept False intentionally. Password change via /auth/password properly $unset the flag.",
+    "server.py has grown to 1521 lines — splitting into routers (/auth, /users, /projects, /kpr, /units, /legality, /reports, /ai) is becoming important.",
+    "AppleIn.email/name fields remain in schema even though they are now ignored — removing them would make the API contract clearer and prevent future accidental use."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5_security.py (new - 20 cases: SEC-001/002/003/005 verification + regression)"
+  ],
+  "success_rate": {"backend": "100% (20/20 test_iteration5_security.py)", "frontend": "100% (admin login + dashboard KPIs + SP3K modal + Berkas KPR filter 'Perlu Tindak Lanjut' all verified at 390x844)"},
+  "seed_data_creation": "TEST_pwd_user created and deleted in-test. No lingering seed data. Pre-seeded data (25 KPR, 36 units, 12 legality, admin/mkt_adit/rina_mkt/kpr1/bgn1) untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview URL: https://bangun-pantau-1.preview.emergentagent.com. Login testIDs: login-username-input / login-password-input / login-submit-button. Dashboard KPI testIDs: kpi-SP3K (opens 'Berkas SP3K (belum akad)' modal). KPR filter testIDs: filter-{all,SEGERA,MACET (label 'Perlu Tindak Lanjut'),PROSES,SP3K,DONE,DIPUTIHKAN}. Users scoped by marketing: mkt_adit sees exactly 10 KPR rows (marketing='ADIT'). AI history is filtered by {session_id, username} — same session_id from a different user returns []. Apple audiences configured in backend/.env APPLE_AUDIENCES; any token not signed by https://appleid.apple.com with those audiences returns 401. All iteration 5 security test IDs reusable: /app/backend/tests/test_iteration5_security.py — run with: pytest backend/tests/test_iteration5_security.py -v --tb=short -o addopts= .",
+  "rca_of_issue": "No open bugs this iteration. The one in-test glitch (test_marketing_cannot_create_kpr_under_other_marketing initially 422 instead of 403/400) was a payload issue: KprIn requires tanggal_booking (Pydantic missing-field 422) and that validation fires before assert_marketing_scope. Fixed by adding tanggal_booking to payload; retest confirms 403 as expected. This is NOT a bug in production code — just test-fixture completeness."
+}

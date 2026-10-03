@@ -53,4 +53,5 @@ export type User = {
   role: "admin_utama" | "admin_kpr" | "admin_legal" | "admin_bangunan" | "marketing";
   marketing_name?: string | null;
   email?: string | null;
+  must_change_password?: boolean;
 };

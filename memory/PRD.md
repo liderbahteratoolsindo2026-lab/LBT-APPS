@@ -69,3 +69,12 @@ Full-stack mobile (Expo) + web application for monitoring KPR subsidized housing
 - Legalitas: nomor sertifikat/IMB/NOP tidak ditampilkan (hanya status Done/Proses/Rencana); bisa dilihat semua role, hanya Admin Legal/Utama yang bisa ubah.
 - Input tanggal (booking, mulai, target, realisasi) kini pakai KALENDER (DateField, react-native-calendars), tampil dd/mm/yyyy, simpan ISO.
 - Fix: index unik email users pakai partialFilterExpression type string + omit field bila kosong (bug 500 saat buat >1 user tanpa email).
+
+## Iterasi 5 (Juni 2026) - Security Audit & Fixes (terverifikasi testing agent 20/20)
+- SEC-001 (HIGH): Marketing kini hanya bisa MEMBACA berkasnya sendiri (list_kpr, dashboard, combined-table, riwayat berkas, konteks AI difilter marketing_name). Sebelumnya bisa lihat data semua marketing via API.
+- SEC-002 (HIGH): Login Apple hanya percaya email dari klaim token Apple terverifikasi (tolak jika tidak ada / belum verified); email dari client diabaikan -> cegah account takeover.
+- SEC-005 (MEDIUM): GET /api/ai/history difilter per username -> tidak bisa baca percakapan AI user lain.
+- SEC-003 (HIGH): Admin seed pada DB baru diberi flag must_change_password=True; frontend ((tabs)/_layout.tsx) memaksa ganti password sebelum pakai app. Admin dev existing tidak diberi flag agar Admin@123 tetap valid untuk uji.
+- Belum dikerjakan (hardening P3, opsional): rate limit login, CORS allowlist, kebijakan password lebih kuat, scope file /api/files per proyek/role (risiko rendah utk tool internal).
+
+## Status: Iterasi 5 Complete (Security)

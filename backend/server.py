@@ -318,9 +318,10 @@ async def seed_defaults():
             "password_hash": hash_password("Admin@123"),
             "role": "admin_utama",
             "active": True,
+            "must_change_password": True,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
-        logger.info("Seeded default admin: admin / Admin@123")
+        logger.info("Seeded default admin (must change password on first login)")
 
     # Seed default settings
     defaults = {
@@ -520,7 +521,8 @@ async def login(data: LoginIn):
         access_token=make_token(user["username"]),
         expires_in=TOKEN_MIN * 60,
         user={"username": user["username"], "name": user["name"], "role": user["role"],
-              "marketing_name": user.get("marketing_name"), "email": user.get("email")},
+              "marketing_name": user.get("marketing_name"), "email": user.get("email"),
+              "must_change_password": user.get("must_change_password", False)},
     )
 
 @api_router.get("/auth/me")
@@ -535,7 +537,8 @@ async def change_own_password(body: ChangePasswordIn, user=Depends(current_user)
     if verify_password(body.new_password, doc["password_hash"]):
         raise HTTPException(400, "Password baru harus berbeda dari password lama")
     await db.users.update_one({"username": user["username"]},
-                              {"$set": {"password_hash": hash_password(body.new_password)}})
+                              {"$set": {"password_hash": hash_password(body.new_password)},
+                               "$unset": {"must_change_password": ""}})
     return {"ok": True}
 
 @api_router.post("/users/{username}/password")
@@ -569,7 +572,8 @@ async def _login_by_email(email: Optional[str]) -> TokenOut:
         access_token=make_token(user["username"]),
         expires_in=TOKEN_MIN * 60,
         user={"username": user["username"], "name": user["name"], "role": user["role"],
-              "marketing_name": user.get("marketing_name"), "email": user.get("email")},
+              "marketing_name": user.get("marketing_name"), "email": user.get("email"),
+              "must_change_password": user.get("must_change_password", False)},
     )
 
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
@@ -601,7 +605,13 @@ async def apple_login(body: AppleIn):
         raise
     except Exception:
         raise HTTPException(401, "Token Apple tidak valid")
-    return await _login_by_email(claims.get("email") or body.email)
+    # Hanya percaya email dari klaim token terverifikasi (jangan pakai email dari client)
+    email = claims.get("email")
+    if not email:
+        raise HTTPException(403, "Email Apple tidak tersedia pada token. Hubungi Admin untuk login manual.")
+    if claims.get("email_verified") in (False, "false"):
+        raise HTTPException(403, "Email Apple belum terverifikasi")
+    return await _login_by_email(email)
 
 @api_router.put("/users/{username}/email")
 async def set_user_email(username: str, body: EmailIn, _=Depends(require_roles("admin_utama"))):
@@ -719,8 +729,11 @@ async def delete_project(pid: str, _=Depends(require_roles("admin_utama"))):
 
 # ============== KPR ==============
 @api_router.get("/kpr")
-async def list_kpr(project_id: str = Depends(current_project), _=Depends(current_user)):
-    rows = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+async def list_kpr(project_id: str = Depends(current_project), user=Depends(current_user)):
+    q: dict = {"project_id": project_id}
+    if user["role"] == "marketing":
+        q["marketing"] = user.get("marketing_name")
+    rows = await db.kpr.find(q, {"_id": 0}).to_list(2000)
     for r in rows:
         await compute_kpr_status(r)
     return rows
@@ -800,7 +813,12 @@ async def update_kpr(kpr_id: str, data: KprIn, user=Depends(require_roles(*KPR_E
     return {"ok": True}
 
 @api_router.get("/kpr/{kpr_id}/history")
-async def kpr_history(kpr_id: str, _=Depends(current_user)):
+async def kpr_history(kpr_id: str, user=Depends(current_user)):
+    rec = await db.kpr.find_one({"id": kpr_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Berkas tidak ditemukan")
+    if user["role"] == "marketing" and rec.get("marketing") != user.get("marketing_name"):
+        raise HTTPException(403, "Tidak berhak melihat riwayat berkas ini")
     rows = await db.kpr_history.find({"kpr_id": kpr_id}, {"_id": 0}).sort("waktu", -1).to_list(500)
     return rows
 
@@ -1106,7 +1124,9 @@ async def delete_legality_doc(doc_id: str, _=Depends(require_roles("admin_utama"
 # ============== Dashboard ==============
 @api_router.get("/dashboard")
 async def dashboard(month: Optional[str] = None, marketing: Optional[str] = None,
-                      project_id: str = Depends(current_project), _=Depends(current_user)):
+                      project_id: str = Depends(current_project), user=Depends(current_user)):
+    if user["role"] == "marketing":
+        marketing = user.get("marketing_name")
     data = await build_dashboard_data(month, marketing, project_id)
     data.pop("units", None)
     data.pop("legality", None)
@@ -1304,10 +1324,13 @@ async def monthly_report(month: Optional[str] = None, marketing: Optional[str] =
                     headers={"Content-Disposition": f'attachment; filename="{label}.{ext}"'})
 
 @api_router.get("/dashboard/combined-table")
-async def combined_table(project_id: str = Depends(current_project), _=Depends(current_user)):
+async def combined_table(project_id: str = Depends(current_project), user=Depends(current_user)):
     """Unit-centric table: blok, consumer, berkas status, construction stage, progress, legal status"""
     units = await db.units.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
-    kpr = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    kpr_q: dict = {"project_id": project_id}
+    if user["role"] == "marketing":
+        kpr_q["marketing"] = user.get("marketing_name")
+    kpr = await db.kpr.find(kpr_q, {"_id": 0}).to_list(2000)
     legality = await db.legality_unit.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
 
     kpr_by_blok = {}
@@ -1384,9 +1407,12 @@ class AiChatIn(BaseModel):
 class AiImageIn(BaseModel):
     prompt: str
 
-async def _ai_data_context(project_id: str) -> str:
+async def _ai_data_context(project_id: str, marketing: Optional[str] = None) -> str:
     proj = await db.projects.find_one({"id": project_id}) or {}
-    kpr = await db.kpr.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
+    kpr_q: dict = {"project_id": project_id}
+    if marketing:
+        kpr_q["marketing"] = marketing
+    kpr = await db.kpr.find(kpr_q, {"_id": 0}).to_list(2000)
     units = await db.units.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
     legality = await db.legality_unit.find({"project_id": project_id}, {"_id": 0}).to_list(2000)
     for r in kpr:
@@ -1421,7 +1447,8 @@ async def ai_chat(body: AiChatIn, project_id: str = Depends(current_project), us
         raise HTTPException(400, "Provider harus 'claude' atau 'chatgpt'")
     from emergentintegrations.llm.chat import LlmChat, UserMessage
     session_id = body.session_id or str(uuid.uuid4())
-    ctx = await _ai_data_context(project_id)
+    mk = user.get("marketing_name") if user["role"] == "marketing" else None
+    ctx = await _ai_data_context(project_id, mk)
     base_sys = ("Anda adalah asisten AI untuk aplikasi monitoring KPR rumah subsidi 'LBT One' "
                 "milik PT Lider Bahtera Toolsindo. Jawab SELALU dalam Bahasa Indonesia, ringkas, "
                 "akurat, dan berbasis DATA yang diberikan. Jika data tidak ada, katakan tidak tahu.\n\n"
@@ -1434,8 +1461,9 @@ async def ai_chat(body: AiChatIn, project_id: str = Depends(current_project), us
                      "profesional, dan jelas (maksimal 2 kalimat) sesuai konteks yang diberikan user.")
     provider, model = AI_PROVIDERS[body.provider]
     chat = LlmChat(api_key=EMERGENT_KEY, session_id=session_id, system_message=base_sys).with_model(provider, model)
-    # muat riwayat singkat agar multi-turn
-    prior = await db.ai_messages.find({"session_id": session_id}, {"_id": 0}).sort("waktu", 1).to_list(20)
+    # muat riwayat singkat agar multi-turn (hanya sesi milik user ini)
+    prior = await db.ai_messages.find({"session_id": session_id, "username": user["username"]},
+                                      {"_id": 0}).sort("waktu", 1).to_list(20)
     history_txt = ""
     for m in prior[-8:]:
         history_txt += f"\n{m['role'].upper()}: {m['content']}"
@@ -1456,8 +1484,9 @@ async def ai_chat(body: AiChatIn, project_id: str = Depends(current_project), us
     return {"session_id": session_id, "reply": reply, "provider": body.provider}
 
 @api_router.get("/ai/history")
-async def ai_history(session_id: str, _=Depends(current_user)):
-    rows = await db.ai_messages.find({"session_id": session_id}, {"_id": 0}).sort("waktu", 1).to_list(200)
+async def ai_history(session_id: str, user=Depends(current_user)):
+    rows = await db.ai_messages.find({"session_id": session_id, "username": user["username"]},
+                                     {"_id": 0}).sort("waktu", 1).to_list(200)
     return rows
 
 @api_router.post("/ai/image")

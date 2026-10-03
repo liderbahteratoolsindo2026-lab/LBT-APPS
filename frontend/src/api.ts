@@ -196,4 +196,6 @@ export const api = {
     request("/api/auth/apple", { method: "POST", body: JSON.stringify(d) }),
   setUserEmail: (u: string, email: string | null) =>
     request(`/api/users/${u}/email`, { method: "PUT", body: JSON.stringify({ email }) }),
+
+  syncSheets: () => request("/api/admin/sync-sheets", { method: "POST" }),
 };

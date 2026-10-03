@@ -79,6 +79,7 @@ export default function Pengaturan() {
         <Text style={styles.sectionTitle}>Multi-Proyek</Text>
         <ProjectsCard />
         <TargetsCard />
+        <SyncSheetCard />
 
         <Text style={styles.sectionTitle}>Daftar Referensi</Text>
         {LIST_CONFIGS.map((c) => (
@@ -172,6 +173,40 @@ function ListEditor({ keyName, title, hasPercent, onBack }: any) {
           </Pressable>
         </ScrollView>
       )}
+    </View>
+  );
+}
+
+function SyncSheetCard() {
+  const qc = useQueryClient();
+  const { activeProject } = useProject();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      const res = await api.syncSheets();
+      setMsg(res.pesan || "Sinkron selesai");
+      qc.invalidateQueries();
+    } catch (e: any) {
+      setErr(e?.message || "Gagal sinkron");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>Tarik Data dari Google Sheet</Text>
+      <Text style={styles.hint}>
+        Ambil data terbaru dari 4 Google Sheet ke proyek "{activeProject?.name || "-"}". Mode tambah/update:
+        data baru ditambahkan & yang ada diperbarui, tanpa menghapus. Field khusus app (bank, cabang, catatan) tidak diubah.
+      </Text>
+      {msg && <Text style={{ color: colors.success, fontSize: 12 }}>{msg}</Text>}
+      {err && <Text style={{ color: colors.error, fontSize: 12 }}>{err}</Text>}
+      <Pressable testID="sync-sheets-btn" onPress={run} disabled={busy} style={[styles.saveBtn, busy && { opacity: 0.6 }]}>
+        {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Tarik Data Terbaru</Text>}
+      </Pressable>
     </View>
   );
 }

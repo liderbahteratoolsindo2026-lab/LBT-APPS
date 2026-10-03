@@ -27,7 +27,8 @@ export function PasswordModal({ visible, onClose, targetUsername }: Props) {
 
   const submit = async () => {
     setErr(null);
-    if (next.length < 6) { setErr("Password baru minimal 6 karakter"); return; }
+    if (next.length < 8) { setErr("Password baru minimal 8 karakter"); return; }
+    if (!/[a-zA-Z]/.test(next) || !/\d/.test(next)) { setErr("Password harus mengandung huruf dan angka"); return; }
     if (next !== confirm) { setErr("Konfirmasi password tidak sama"); return; }
     setBusy(true);
     try {
@@ -59,7 +60,7 @@ export function PasswordModal({ visible, onClose, targetUsername }: Props) {
             {!isReset && (
               <Input label="Password saat ini" value={current} onChange={setCurrent} secure={!show} testID="pwd-current" />
             )}
-            <Input label="Password baru (min. 6 karakter)" value={next} onChange={setNext} secure={!show} testID="pwd-new" />
+            <Input label="Password baru (min. 8 karakter, huruf & angka)" value={next} onChange={setNext} secure={!show} testID="pwd-new" />
             <Input label="Ulangi password baru" value={confirm} onChange={setConfirm} secure={!show} testID="pwd-confirm" />
             <Pressable onPress={() => setShow((v) => !v)} style={styles.showRow} hitSlop={6}>
               <Icon name={show ? "eye-off-outline" : "eye-outline"} size={16} color={colors.muted} />

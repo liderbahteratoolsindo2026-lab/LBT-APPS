@@ -17,6 +17,7 @@ export default function Legalitas() {
   const [tab, setTab] = useState<"unit" | "project">("unit");
   const [selected, setSelected] = useState<any>(null);
   const [editingProject, setEditingProject] = useState(false);
+  const [addingLegal, setAddingLegal] = useState(false);
 
   const unitsQ = useQuery({ queryKey: ["units"], queryFn: () => api.listUnits() });
   const legalityQ = useQuery({ queryKey: ["legality"], queryFn: () => api.listLegality() });
@@ -44,6 +45,12 @@ export default function Legalitas() {
       {tab === "unit" ? (
         unitsQ.isLoading ? <ActivityIndicator style={{ marginTop: 40 }} color={colors.brandPrimary} /> :
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: 120 }}>
+          {editable && (
+            <Pressable testID="add-legality-button" onPress={() => setAddingLegal(true)} style={styles.addLegalBtn}>
+              <Icon name="add-circle" size={18} color={colors.onBrandPrimary} />
+              <Text style={styles.addLegalText}>Tambah Legalitas</Text>
+            </Pressable>
+          )}
           {(unitsQ.data || []).map((u: any) => {
             const l = legalityByBlok.get(u.blok_kavling) || {};
             return (
@@ -64,6 +71,24 @@ export default function Legalitas() {
               </Pressable>
             );
           })}
+          {(() => {
+            const unitBloks = new Set((unitsQ.data || []).map((u: any) => u.blok_kavling));
+            const extra = (legalityQ.data || []).filter((l: any) => !unitBloks.has(l.blok_kavling));
+            return extra.map((l: any) => (
+              <Pressable key={`x-${l.blok_kavling}`} style={styles.card} testID={`legal-card-${l.blok_kavling}`}
+                onPress={() => setSelected({ ...l })}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
+                  <Text style={styles.cardTitle}>Blok {l.blok_kavling}</Text>
+                  <Text style={{ fontSize: 11, color: colors.muted }}>tanpa data unit</Text>
+                </View>
+                <LegalRow label="Sertifikat" status={l.status_sertifikat} />
+                <LegalRow label="IMB/PBG" status={l.status_imb_pbg} />
+                <LegalRow label="PBB" status={l.status_pbb} />
+                <LegalRow label="SSP/PPh" status={l.status_ssp_pph} />
+                <LegalRow label="BPHTB" status={l.status_bphtb} />
+              </Pressable>
+            ));
+          })()}
         </ScrollView>
       ) : (
         projectQ.isLoading ? <ActivityIndicator style={{ marginTop: 40 }} color={colors.brandPrimary} /> :
@@ -103,7 +128,65 @@ export default function Legalitas() {
         onClose={() => setEditingProject(false)}
         onSaved={() => { setEditingProject(false); qc.invalidateQueries({ queryKey: ["legality_project"] }); }}
       />
+      <AddLegalityPicker
+        visible={addingLegal}
+        units={unitsQ.data || []}
+        existing={legalityByBlok}
+        onClose={() => setAddingLegal(false)}
+        onPick={(blok: string) => { setAddingLegal(false); setSelected({ blok_kavling: blok }); }}
+      />
     </View>
+  );
+}
+
+function AddLegalityPicker({ visible, units, existing, onClose, onPick }: any) {
+  const insets = useSafeAreaInsets();
+  const [mode, setMode] = useState<"pilih" | "manual">("pilih");
+  const [blok, setBlok] = useState("");
+  const [manual, setManual] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => { if (visible) { setMode("pilih"); setBlok(""); setManual(""); setErr(null); } }, [visible]);
+
+  const lanjut = () => {
+    const chosen = (mode === "pilih" ? blok : manual).trim();
+    if (!chosen) { setErr("Pilih atau ketik blok/kavling dulu"); return; }
+    onPick(chosen);
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalWrap}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, justifyContent: "flex-end" }}>
+          <View style={[styles.modalCard, { paddingBottom: insets.bottom + spacing.lg }]} testID="add-legality-modal">
+            <View style={styles.modalHandle} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.md }}>
+              <Text style={styles.modalTitle}>Tambah Legalitas</Text>
+              <Pressable onPress={onClose} hitSlop={8}><Icon name="close" size={24} color={colors.muted} /></Pressable>
+            </View>
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md }}>
+              <Pressable onPress={() => setMode("pilih")} style={[styles.modeChip, mode === "pilih" && styles.modeChipActive]}>
+                <Text style={[styles.modeText, mode === "pilih" && { color: colors.onBrandPrimary }]}>Pilih dari Unit</Text>
+              </Pressable>
+              <Pressable onPress={() => setMode("manual")} style={[styles.modeChip, mode === "manual" && styles.modeChipActive]}>
+                <Text style={[styles.modeText, mode === "manual" && { color: colors.onBrandPrimary }]}>Ketik Blok Baru</Text>
+              </Pressable>
+            </View>
+            {mode === "pilih" ? (
+              <SelectField label="Blok / Kavling (dari daftar unit)" value={blok}
+                options={(units || []).map((u: any) => ({ label: `${u.blok_kavling}${existing?.get?.(u.blok_kavling) ? " (sudah ada)" : ""}`, value: u.blok_kavling }))}
+                onChange={(v: any) => setBlok(v)} />
+            ) : (
+              <Field label="Blok / Kavling baru (mis. B20/9)" value={manual} onChange={(v: any) => setManual(v)} />
+            )}
+            {err && <Text style={{ color: colors.error, fontSize: 12, marginTop: 4 }}>{err}</Text>}
+            <Pressable testID="legal-pick-next" onPress={lanjut} style={[styles.saveBtn, { marginTop: spacing.md }]}>
+              <Text style={styles.saveBtnText}>Lanjut Isi Status</Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
   );
 }
 
@@ -255,4 +338,9 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: "800", color: colors.onSurface },
   saveBtn: { backgroundColor: colors.brandPrimary, height: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center", marginTop: spacing.sm },
   saveBtnText: { color: colors.onBrandPrimary, fontSize: 15, fontWeight: "700" },
+  addLegalBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brandPrimary, height: 46, borderRadius: radius.md },
+  addLegalText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 14 },
+  modeChip: { flex: 1, alignItems: "center", paddingVertical: 10, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.brandPrimary, backgroundColor: colors.surface },
+  modeChipActive: { backgroundColor: colors.brandPrimary },
+  modeText: { fontSize: 13, fontWeight: "700", color: colors.brandPrimary },
 });

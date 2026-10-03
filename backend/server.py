@@ -177,10 +177,10 @@ class KprIn(BaseModel):
 
 class ChangePasswordIn(BaseModel):
     current_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=6, max_length=72)
+    new_password: str = Field(..., min_length=8, max_length=72)
 
 class ResetPasswordIn(BaseModel):
-    new_password: str = Field(..., min_length=6, max_length=72)
+    new_password: str = Field(..., min_length=8, max_length=72)
 
 class UnitIn(BaseModel):
     blok_kavling: str
@@ -193,7 +193,7 @@ class UnitIn(BaseModel):
     link_foto_dokumentasi: str = ""
 
 class LegalityUnitIn(BaseModel):
-    blok_kavling: str
+    blok_kavling: Optional[str] = None
     status_sertifikat: str = ""
     nomor_sertifikat: str = ""
     status_imb_pbg: str = ""
@@ -229,6 +229,18 @@ def verify_password(pw: str, hashed: str) -> bool:
         return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("ascii"))
     except Exception:
         return False
+
+def validate_password(pw: str):
+    """Kebijakan: min 8 karakter, wajib ada huruf & angka."""
+    if not pw or len(pw) < 8:
+        raise HTTPException(400, "Password minimal 8 karakter")
+    if not any(c.isalpha() for c in pw):
+        raise HTTPException(400, "Password harus mengandung huruf")
+    if not any(c.isdigit() for c in pw):
+        raise HTTPException(400, "Password harus mengandung angka")
+
+LOCKOUT_THRESHOLD = 5
+LOCKOUT_MINUTES = 15
 
 def make_token(username: str) -> str:
     now = datetime.now(timezone.utc)
@@ -513,10 +525,35 @@ async def compute_unit_status(unit: dict) -> dict:
 @api_router.post("/auth/login", response_model=TokenOut)
 async def login(data: LoginIn):
     user = await db.users.find_one({"username": data.username})
+    now_dt = datetime.now(timezone.utc)
+    if user:
+        locked = user.get("locked_until")
+        if locked:
+            try:
+                lu = datetime.fromisoformat(locked)
+                if lu.tzinfo is None:
+                    lu = lu.replace(tzinfo=timezone.utc)
+            except Exception:
+                lu = None
+            if lu and lu > now_dt:
+                mins = max(1, int((lu - now_dt).total_seconds() // 60) + 1)
+                raise HTTPException(429, f"Akun terkunci sementara karena terlalu banyak percobaan gagal. Coba lagi dalam {mins} menit.")
     if not user or not verify_password(data.password, user["password_hash"]):
+        if user:
+            attempts = int(user.get("failed_login_attempts", 0)) + 1
+            upd: dict = {"failed_login_attempts": attempts}
+            if attempts >= LOCKOUT_THRESHOLD:
+                upd["locked_until"] = (now_dt + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()
+            await db.users.update_one({"username": user["username"]}, {"$set": upd})
+            sisa = LOCKOUT_THRESHOLD - attempts
+            if 0 < sisa <= 2:
+                raise HTTPException(401, f"Username atau password salah. Sisa {sisa} percobaan sebelum akun terkunci.")
         raise HTTPException(401, "Username atau password salah")
     if not user.get("active", False):
         raise HTTPException(403, "User inactive")
+    if user.get("failed_login_attempts") or user.get("locked_until"):
+        await db.users.update_one({"username": user["username"]},
+                                  {"$set": {"failed_login_attempts": 0, "locked_until": None}})
     return TokenOut(
         access_token=make_token(user["username"]),
         expires_in=TOKEN_MIN * 60,
@@ -534,6 +571,7 @@ async def change_own_password(body: ChangePasswordIn, user=Depends(current_user)
     doc = await db.users.find_one({"username": user["username"]}, {"password_hash": 1})
     if not doc or not verify_password(body.current_password, doc["password_hash"]):
         raise HTTPException(400, "Password saat ini salah")
+    validate_password(body.new_password)
     if verify_password(body.new_password, doc["password_hash"]):
         raise HTTPException(400, "Password baru harus berbeda dari password lama")
     await db.users.update_one({"username": user["username"]},
@@ -543,8 +581,10 @@ async def change_own_password(body: ChangePasswordIn, user=Depends(current_user)
 
 @api_router.post("/users/{username}/password")
 async def admin_reset_password(username: str, body: ResetPasswordIn, _=Depends(require_roles("admin_utama"))):
+    validate_password(body.new_password)
     res = await db.users.update_one({"username": username},
-                                    {"$set": {"password_hash": hash_password(body.new_password)}})
+                                    {"$set": {"password_hash": hash_password(body.new_password),
+                                              "failed_login_attempts": 0, "locked_until": None}})
     if res.matched_count != 1:
         raise HTTPException(404, "User tidak ditemukan")
     return {"ok": True}
@@ -637,6 +677,7 @@ async def list_users(_=Depends(require_roles("admin_utama"))):
 async def create_user(data: UserCreate, _=Depends(require_roles("admin_utama"))):
     if await db.users.find_one({"username": data.username}):
         raise HTTPException(400, "Username sudah ada")
+    validate_password(data.password)
     if data.role == "marketing" and not (data.marketing_name or "").strip():
         raise HTTPException(400, "Pilih nama marketing untuk akun role Marketing")
     email = (data.email or "").strip().lower() or None
@@ -726,6 +767,123 @@ async def delete_project(pid: str, _=Depends(require_roles("admin_utama"))):
         raise HTTPException(400, "Proyek masih memiliki data berkas/unit. Hapus datanya dulu.")
     await db.projects.delete_one({"id": pid})
     return {"ok": True}
+
+# ---- Sinkron data dari Google Sheets (tambah/update, tidak menghapus) ----
+_SYNC_SHEETS = {
+    "kpr": "1y5VU4XjFPeiuH72jGo-lC4ofcSUGnQwX_-Tq0SUdCKI",
+    "bangunan": "1XRn032jbUPV6b8-KYfcbekg2tZfXqephTRkvG8VIr38",
+    "legal": "1LkaliA406Tf_YBjWwzWwokTW75jWvHYhJH9GVceSoAE",
+}
+_STAGE_CANON = {s.lower(): s for s in [
+    "Rencana Bangun", "Pondasi", "Sloof", "Dinding", "Kuda-kuda/Atap", "Plafon",
+    "Lantai", "Pengecatan", "Instalasi Listrik/Air", "Finishing", "Serah Terima"]}
+_KPR_STAGE_CANON = {s.lower(): s for s in [
+    "Pemberkasan", "Entry", "Dvo", "Ots", "Analis", "Approval", "Banding", "Reject", "Sp3k", "Akad"]}
+
+def _parse_date_id(s):
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in ("%d/%m/%y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+def _fetch_sheets_sync():
+    import csv as _csv
+    import io as _io
+    out = {}
+    for k, sid in _SYNC_SHEETS.items():
+        r = requests.get(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv", timeout=60)
+        r.raise_for_status()
+        out[k] = list(_csv.reader(_io.StringIO(r.text)))
+    return out
+
+@api_router.post("/admin/sync-sheets")
+async def sync_sheets(project_id: str = Depends(current_project), _=Depends(require_roles("admin_utama"))):
+    try:
+        sheets = await run_in_threadpool(_fetch_sheets_sync)
+    except Exception as e:
+        raise HTTPException(502, f"Gagal mengambil Google Sheets: {e}")
+    now = datetime.now(timezone.utc).isoformat()
+    n_unit = n_kpr = n_legal = 0
+
+    # UNITS (tambah/update, pertahankan foto_path yang sudah ada)
+    for r in sheets["bangunan"]:
+        if len(r) < 11 or not r[1].strip().isdigit():
+            continue
+        blok = r[2].strip()
+        if not blok:
+            continue
+        stage = _STAGE_CANON.get((r[5] or "").strip().lower(), (r[5] or "").strip().title() or "Rencana Bangun")
+        await db.units.update_one(
+            {"blok_kavling": blok, "project_id": project_id},
+            {"$set": {"nama_kontraktor": r[4].strip(), "tahap_konstruksi": stage,
+                      "tanggal_mulai": _parse_date_id(r[7]), "tanggal_target_selesai": _parse_date_id(r[8]),
+                      "tanggal_realisasi_selesai": _parse_date_id(r[9]),
+                      "kendala_catatan": (r[12].strip() if len(r) > 12 else ""),
+                      "updated_at": now},
+             "$setOnInsert": {"blok_kavling": blok, "project_id": project_id, "foto_path": None}},
+            upsert=True)
+        n_unit += 1
+
+    # KPR (key: project+blok+nama; pertahankan field khusus app)
+    started = False
+    for r in sheets["kpr"]:
+        if r and any("DAFTAR BERKAS" in (c or "") for c in r):
+            started = True
+            continue
+        if not started or len(r) < 13:
+            continue
+        status_label = (r[6] or "").strip().upper()
+        if status_label not in ("DONE", "PROSES", "DIPUTIHKAN"):
+            continue
+        nama = (r[1] or "").strip()
+        blok = (r[3] or "").strip()
+        if not nama or not blok:
+            continue
+        sp3k_date = _parse_date_id(r[10]) if len(r) > 10 else None
+        tahap_raw = (r[12] or "").strip() if len(r) > 12 else ""
+        tahap = _KPR_STAGE_CANON.get(tahap_raw.lower(), tahap_raw.title() or "Pemberkasan")
+        set_fields = {"marketing": (r[4] or "").strip(), "tahap_saat_ini": tahap,
+                      "tanggal_sp3k": sp3k_date, "keterangan": (r[7] or "").strip()}
+        if tahap.lower() == "akad":
+            set_fields["tanggal_akad"] = sp3k_date or now[:10]
+        if status_label == "DIPUTIHKAN":
+            set_fields["diputihkan_manual"] = True
+            set_fields.setdefault("tanggal_pemutihan", now)
+        await db.kpr.update_one(
+            {"project_id": project_id, "blok_kavling": blok, "nama_konsumen": nama},
+            {"$set": set_fields,
+             "$setOnInsert": {"id": str(uuid.uuid4()), "project_id": project_id,
+                              "blok_kavling": blok, "nama_konsumen": nama,
+                              "bank_pemroses": "", "cabang_pemroses": "", "tanggal_booking": "",
+                              "keterangan_tahap": "", "tanggal_update_terakhir": now, "created_by": "sync"}},
+            upsert=True)
+        n_kpr += 1
+
+    # LEGALITAS
+    for r in sheets["legal"]:
+        if len(r) < 13 or not r[1].strip().isdigit():
+            continue
+        blok = (r[2] or "").strip()
+        if not blok:
+            continue
+        await db.legality_unit.update_one(
+            {"blok_kavling": blok, "project_id": project_id},
+            {"$set": {"status_sertifikat": (r[4] or "").strip(), "nomor_sertifikat": (r[5] or "").strip(),
+                      "status_imb_pbg": (r[6] or "").strip(), "nomor_imb_pbg": (r[7] or "").strip(),
+                      "status_pbb": (r[8] or "").strip(), "nop": (r[9] or "").strip(),
+                      "status_ssp_pph": (r[10] or "").strip(), "status_bphtb": (r[11] or "").strip(),
+                      "keterangan": (r[12] or "").strip(), "updated_at": now},
+             "$setOnInsert": {"blok_kavling": blok, "project_id": project_id}},
+            upsert=True)
+        n_legal += 1
+
+    return {"ok": True, "units": n_unit, "kpr": n_kpr, "legalitas": n_legal,
+            "pesan": f"Sinkron selesai: {n_unit} unit, {n_kpr} berkas, {n_legal} legalitas (tambah/update)."}
 
 # ============== KPR ==============
 @api_router.get("/kpr")

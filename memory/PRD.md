@@ -78,3 +78,12 @@ Full-stack mobile (Expo) + web application for monitoring KPR subsidized housing
 - Belum dikerjakan (hardening P3, opsional): rate limit login, CORS allowlist, kebijakan password lebih kuat, scope file /api/files per proyek/role (risiko rendah utk tool internal).
 
 ## Status: Iterasi 5 Complete (Security)
+
+## Iterasi 6 (Juni 2026) - Fitur operasional & hardening (terverifikasi 20/20 + E2E)
+- Tab Bangunan: Admin Utama & Admin Bangunan bisa TAMBAH blok/kavling baru (tombol "Tambah Blok" + form: blok, kontraktor, tahap, tgl kalender). Unit baru otomatis tersedia untuk booking di tab Berkas KPR setelah tahap > 0% (KPR form blok memakai available_units).
+- Tab Legalitas: Admin Utama & Admin Legal bisa TAMBAH legalitas (tombol "Tambah Legalitas") dengan pilih blok dari unit ATAU ketik blok baru manual, lalu isi status (Rencana/Proses/Done). Legalitas blok non-unit tetap tampil (label "tanpa data unit").
+- Tombol "Tarik Data Terbaru" (Pengaturan, Admin Utama): POST /api/admin/sync-sheets menarik data dari 4 Google Sheet ke proyek aktif, mode TAMBAH/UPDATE (upsert by project+blok / project+blok+nama), tidak menghapus, dan tidak menimpa field khusus app (bank, cabang, catatan). Idempoten.
+- Kebijakan password (semua create/change/reset): minimal 8 karakter + wajib huruf & angka (validate_password + Pydantic min_length=8).
+- Lockout login: 5x gagal -> akun terkunci 15 menit (429), reset counter saat login sukses / admin reset. Disimpan di field user failed_login_attempts & locked_until. Pesan generik + hint sisa percobaan.
+
+## Status: Iterasi 6 Complete

@@ -22,6 +22,7 @@ export default function BangunanScreen() {
   const editable = canEdit(user?.role, "unit");
   const qc = useQueryClient();
   const [selected, setSelected] = useState<any>(null);
+  const [adding, setAdding] = useState(false);
 
   const { data = [], isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["units"], queryFn: () => api.listUnits(),
@@ -30,8 +31,18 @@ export default function BangunanScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Text style={styles.h1}>Progres Bangunan</Text>
-        <Text style={styles.subtitle}>{data.length} unit</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <View>
+            <Text style={styles.h1}>Progres Bangunan</Text>
+            <Text style={styles.subtitle}>{data.length} unit</Text>
+          </View>
+          {editable && (
+            <Pressable testID="add-unit-button" onPress={() => setAdding(true)} style={styles.addBtn}>
+              <Icon name="add" size={20} color={colors.onBrandPrimary} />
+              <Text style={styles.addBtnText}>Tambah Blok</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
       {isLoading ? (
         <ActivityIndicator style={{ marginTop: spacing.xxl }} color={colors.brandPrimary} />
@@ -74,7 +85,81 @@ export default function BangunanScreen() {
         onClose={() => setSelected(null)}
         onSaved={() => { setSelected(null); qc.invalidateQueries({ queryKey: ["units"] }); }}
       />
+      <AddUnitModal
+        visible={adding}
+        existingBloks={data.map((d: any) => d.blok_kavling)}
+        onClose={() => setAdding(false)}
+        onSaved={() => { setAdding(false); qc.invalidateQueries({ queryKey: ["units"] }); }}
+      />
     </View>
+  );
+}
+
+function AddUnitModal({ visible, existingBloks, onClose, onSaved }: any) {
+  const insets = useSafeAreaInsets();
+  const [form, setForm] = useState<any>({ blok_kavling: "", nama_kontraktor: "", tahap_konstruksi: "", tanggal_mulai: "", tanggal_target_selesai: "" });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const stagesQ = useQuery({ queryKey: ["list", "construction_stages"], queryFn: () => api.getList("construction_stages"), enabled: visible });
+
+  useEffect(() => {
+    if (visible) { setForm({ blok_kavling: "", nama_kontraktor: "", tahap_konstruksi: "", tanggal_mulai: "", tanggal_target_selesai: "" }); setErr(null); }
+  }, [visible]);
+
+  const save = async () => {
+    const blok = (form.blok_kavling || "").trim();
+    if (!blok) { setErr("Blok/Kavling wajib diisi"); return; }
+    if (existingBloks.includes(blok)) { setErr("Blok sudah ada di proyek ini"); return; }
+    setSaving(true); setErr(null);
+    try {
+      await api.upsertUnit({
+        blok_kavling: blok,
+        nama_kontraktor: form.nama_kontraktor || "",
+        tahap_konstruksi: form.tahap_konstruksi || "Rencana Bangun",
+        tanggal_mulai: form.tanggal_mulai || null,
+        tanggal_target_selesai: form.tanggal_target_selesai || null,
+        tanggal_realisasi_selesai: null,
+        kendala_catatan: "",
+        link_foto_dokumentasi: "",
+      });
+      onSaved();
+    } catch (e: any) { setErr(e?.message || "Gagal menyimpan"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalWrap}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, justifyContent: "flex-end" }}>
+          <View style={[styles.modalCard, { paddingBottom: insets.bottom + spacing.lg }]}>
+            <View style={styles.modalHandle} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.md }}>
+              <Text style={styles.modalTitle}>Tambah Blok / Kavling</Text>
+              <Pressable onPress={onClose} hitSlop={8}><Icon name="close" size={24} color={colors.muted} /></Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={false}>
+              <Field label="Blok / Kavling (mis. A5/10)" value={form.blok_kavling} onChange={(v: any) => setForm({ ...form, blok_kavling: v })} />
+              <Field label="Nama Kontraktor" value={form.nama_kontraktor} onChange={(v: any) => setForm({ ...form, nama_kontraktor: v })} />
+              <SelectField label="Tahap Konstruksi" value={form.tahap_konstruksi}
+                options={(stagesQ.data?.items || []).map((i: any) => ({ label: `${i.name} (${i.extra?.percent ?? 0}%)`, value: i.name }))}
+                onChange={(v: any) => setForm({ ...form, tahap_konstruksi: v })} />
+              <DateField label="Tanggal Mulai" value={form.tanggal_mulai} onChange={(v: any) => setForm({ ...form, tanggal_mulai: v })} />
+              <DateField label="Target Selesai" value={form.tanggal_target_selesai} onChange={(v: any) => setForm({ ...form, tanggal_target_selesai: v })} />
+              <Text style={{ fontSize: 11, color: colors.muted }}>Catatan: unit baru bisa dibooking di tab Berkas KPR setelah tahap konstruksi {'>'} 0%.</Text>
+            </ScrollView>
+            {err && (
+              <View style={styles.errorBox}>
+                <Icon name="alert-circle" size={16} color={colors.error} />
+                <Text style={{ color: colors.error, flex: 1, fontSize: 13 }}>{err}</Text>
+              </View>
+            )}
+            <Pressable testID="save-new-unit-button" onPress={save} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]}>
+              {saving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Simpan Blok Baru</Text>}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
   );
 }
 
@@ -298,6 +383,8 @@ const styles = StyleSheet.create({
   header: { backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   h1: { fontSize: 24, fontWeight: "800", color: colors.onSurface },
   subtitle: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  addBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.brandPrimary, paddingHorizontal: spacing.md, height: 40, borderRadius: radius.md },
+  addBtnText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 13 },
   card: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
   name: { fontSize: 16, fontWeight: "700", color: colors.onSurface },
   meta: { fontSize: 12, color: colors.muted, marginTop: 2 },

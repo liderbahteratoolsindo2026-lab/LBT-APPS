@@ -12,6 +12,7 @@ const ROLES = [
   { value: "admin_kpr", label: "Admin KPR" },
   { value: "admin_legal", label: "Admin Legal" },
   { value: "admin_bangunan", label: "Admin Bangunan" },
+  { value: "marketing", label: "Marketing (Freelance)" },
 ];
 
 export default function Users() {
@@ -19,15 +20,16 @@ export default function Users() {
   const router = useRouter();
   const qc = useQueryClient();
   const { data = [] } = useQuery({ queryKey: ["users"], queryFn: () => api.listUsers() });
-  const [form, setForm] = useState({ username: "", password: "", name: "", role: "admin_kpr" });
+  const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing") });
+  const [form, setForm] = useState({ username: "", password: "", name: "", role: "admin_kpr", marketing_name: "" });
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const create = async () => {
     setErr(null); setSaving(true);
     try {
-      await api.createUser(form);
-      setForm({ username: "", password: "", name: "", role: "admin_kpr" });
+      await api.createUser({ ...form, marketing_name: form.role === "marketing" ? form.marketing_name : null });
+      setForm({ username: "", password: "", name: "", role: "admin_kpr", marketing_name: "" });
       qc.invalidateQueries({ queryKey: ["users"] });
     } catch (e: any) { setErr(e?.message || "Gagal"); }
     finally { setSaving(false); }
@@ -56,6 +58,19 @@ export default function Users() {
               </Pressable>
             ))}
           </ScrollView>
+          {form.role === "marketing" && (
+            <View style={{ gap: 4 }}>
+              <Text style={styles.hint}>Nama marketing (dari Pengaturan) — akun hanya bisa mengubah berkas atas nama ini</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }}>
+                {(marketingQ.data?.items || []).map((m: any) => (
+                  <Pressable key={m.id} testID={`marketing-opt-${m.name}`} onPress={() => setForm({ ...form, marketing_name: m.name })}
+                    style={[styles.chip, { flexShrink: 0 }, form.marketing_name === m.name && styles.chipActive]}>
+                    <Text style={[styles.chipText, form.marketing_name === m.name && styles.chipTextActive]}>{m.name}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
           {err && <Text style={{ color: colors.error, fontSize: 12 }}>{err}</Text>}
           <Pressable testID="create-user-btn" onPress={create} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]}>
             {saving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Tambah User</Text>}
@@ -67,7 +82,7 @@ export default function Users() {
             <View key={u.username} style={styles.userRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.userName}>{u.name}</Text>
-                <Text style={styles.userSub}>@{u.username} · {ROLES.find((r) => r.value === u.role)?.label}</Text>
+                <Text style={styles.userSub}>@{u.username} · {ROLES.find((r) => r.value === u.role)?.label}{u.marketing_name ? ` · ${u.marketing_name}` : ""}</Text>
               </View>
               {u.username !== "admin" && (
                 <Pressable onPress={() => del(u.username)} hitSlop={8}>
@@ -97,4 +112,5 @@ const styles = StyleSheet.create({
   userRow: { flexDirection: "row", alignItems: "center", paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider },
   userName: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
   userSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  hint: { fontSize: 11, color: colors.muted },
 });

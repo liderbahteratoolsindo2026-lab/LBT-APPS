@@ -8,13 +8,13 @@ import { Image } from "expo-image";
 import Icon from "@react-native-vector-icons/ionicons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth-context";
-import { colors, spacing, radius } from "@/src/theme";
+import { colors, spacing, radius, heroGradient } from "@/src/theme";
 
 export default function Login() {
   const { login } = useAuth();
   const insets = useSafeAreaInsets();
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("Admin@123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showPwd, setShowPwd] = useState(false);
@@ -49,7 +49,7 @@ export default function Login() {
               contentFit="cover"
             />
             <LinearGradient
-              colors={["rgba(15,62,58,0.4)", "rgba(15,62,58,0.95)"]}
+              colors={heroGradient}
               style={StyleSheet.absoluteFill}
             />
             <View style={[styles.heroContent, { paddingTop: insets.top + spacing.xl }]}>
@@ -62,7 +62,7 @@ export default function Login() {
           </View>
 
           <View style={styles.formCard}>
-            <Text style={styles.title}>Masuk Akun Admin</Text>
+            <Text style={styles.title}>Masuk Akun</Text>
             <Text style={styles.sub}>Pantau KPR, bangunan, & legalitas dalam satu tempat.</Text>
 
             <View style={styles.field}>
@@ -121,8 +121,6 @@ export default function Login() {
                 <Text style={styles.btnText}>Masuk</Text>
               )}
             </Pressable>
-
-            <Text style={styles.hint}>Default: admin / Admin@123</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -165,5 +163,4 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center", marginTop: spacing.xs,
   },
   btnText: { color: colors.onBrandPrimary, fontSize: 16, fontWeight: "700" },
-  hint: { textAlign: "center", color: colors.muted, fontSize: 12 },
 });

@@ -7,9 +7,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Icon from "@react-native-vector-icons/ionicons";
 import { api } from "@/src/api";
-import { useAuth, canEdit } from "@/src/auth-context";
+import { useAuth, canEdit, canEditKprItem } from "@/src/auth-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { Badge, statusToKind } from "@/src/badge";
+import { formatDateTime } from "@/src/report-utils";
 
 type Kpr = any;
 
@@ -21,6 +22,10 @@ export default function KprScreen() {
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Kpr | null>(null);
+  const [historyOf, setHistoryOf] = useState<Kpr | null>(null);
+  const [putihOf, setPutihOf] = useState<Kpr | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const canPutihkan = user?.role === "admin_utama" || user?.role === "admin_kpr";
 
   const { data = [], isLoading, refetch, isRefetching } = useQuery({
     queryKey: ["kpr"], queryFn: () => api.listKpr(),
@@ -29,6 +34,12 @@ export default function KprScreen() {
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.deleteKpr(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["kpr"] }),
+  });
+  const batalPutihMut = useMutation({
+    mutationFn: (id: string) => api.batalPutihkanKpr(id),
+    onMutate: () => setActionErr(null),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kpr"] }); qc.invalidateQueries({ queryKey: ["units_available"] }); },
+    onError: (e: any) => setActionErr(e?.message || "Gagal membatalkan pemutihan"),
   });
 
   const filtered = useMemo(() => {
@@ -47,7 +58,9 @@ export default function KprScreen() {
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <View>
             <Text style={styles.h1}>Berkas KPR</Text>
-            <Text style={styles.subtitle}>{filtered.length} konsumen</Text>
+            <Text style={styles.subtitle}>
+              {filtered.length} konsumen{user?.role === "marketing" ? ` · Marketing ${user.marketing_name}` : ""}
+            </Text>
           </View>
           {editable && (
             <Pressable
@@ -71,6 +84,14 @@ export default function KprScreen() {
           />
         </View>
       </View>
+
+      {actionErr && (
+        <View style={[styles.errorBox, { marginHorizontal: spacing.lg, marginTop: spacing.sm }]}>
+          <Icon name="alert-circle" size={16} color={colors.error} />
+          <Text style={{ color: colors.error, flex: 1, fontSize: 13 }}>{actionErr}</Text>
+          <Pressable onPress={() => setActionErr(null)} hitSlop={8}><Icon name="close" size={16} color={colors.error} /></Pressable>
+        </View>
+      )}
 
       {isLoading ? (
         <ActivityIndicator style={{ marginTop: spacing.xxl }} color={colors.brandPrimary} />
@@ -106,21 +127,62 @@ export default function KprScreen() {
                   </Text>
                 )}
               </View>
-              {editable && (
-                <View style={styles.actions}>
-                  <Pressable style={styles.actionBtn} onPress={() => { setEditing(item); setShowForm(true); }}>
-                    <Icon name="pencil" size={14} color={colors.brandPrimary} />
-                    <Text style={styles.actionText}>Ubah</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.actionBtn, { backgroundColor: "#FEE2E2" }]}
-                    onPress={() => deleteMut.mutate(item.id)}
-                  >
-                    <Icon name="trash" size={14} color={colors.error} />
-                    <Text style={[styles.actionText, { color: colors.error }]}>Hapus</Text>
-                  </Pressable>
+              {item.status === "DIPUTIHKAN" && (
+                <View style={styles.putihInfo} testID={`putih-info-${item.blok_kavling}`}>
+                  <Icon name="refresh-circle" size={14} color={colors.error} />
+                  <Text style={styles.putihText}>
+                    {item.diputihkan_manual
+                      ? `Diputihkan manual${item.alasan_pemutihan ? `: ${item.alasan_pemutihan}` : ""} · Blok ${item.blok_kavling} tersedia untuk konsumen baru`
+                      : `Diputihkan otomatis (lewat batas waktu) · Blok ${item.blok_kavling} tersedia untuk konsumen baru`}
+                  </Text>
                 </View>
               )}
+              <View style={styles.actions}>
+                <Pressable style={[styles.actionBtn, { backgroundColor: colors.surfaceSecondary }]}
+                  testID={`history-btn-${item.blok_kavling}`}
+                  onPress={() => setHistoryOf(item)}>
+                  <Icon name="time-outline" size={14} color={colors.onSurfaceSecondary} />
+                  <Text style={[styles.actionText, { color: colors.onSurfaceSecondary }]}>Riwayat</Text>
+                </Pressable>
+                {canPutihkan && item.status === "PROSES" && (
+                  <Pressable style={[styles.actionBtn, { backgroundColor: "#FEF3C7" }]}
+                    testID={`putihkan-btn-${item.blok_kavling}`}
+                    onPress={() => setPutihOf(item)}>
+                    <Icon name="refresh-circle-outline" size={14} color={colors.warning} />
+                    <Text style={[styles.actionText, { color: colors.warning }]}>Putihkan</Text>
+                  </Pressable>
+                )}
+                {canPutihkan && item.status === "DIPUTIHKAN" && item.diputihkan_manual && (
+                  <Pressable style={[styles.actionBtn, { backgroundColor: "#FEF3C7" }]}
+                    testID={`batal-putih-btn-${item.blok_kavling}`}
+                    disabled={batalPutihMut.isPending}
+                    onPress={() => batalPutihMut.mutate(item.id)}>
+                    <Icon name="arrow-undo-outline" size={14} color={colors.warning} />
+                    <Text style={[styles.actionText, { color: colors.warning }]}>Batal Putih</Text>
+                  </Pressable>
+                )}
+                {canEditKprItem(user, item) ? (
+                  <>
+                    <Pressable style={styles.actionBtn} testID={`edit-btn-${item.blok_kavling}`}
+                      onPress={() => { setEditing(item); setShowForm(true); }}>
+                      <Icon name="pencil" size={14} color={colors.brandPrimary} />
+                      <Text style={styles.actionText}>Ubah</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.actionBtn, { backgroundColor: "#FEE2E2" }]}
+                      onPress={() => deleteMut.mutate(item.id)}
+                    >
+                      <Icon name="trash" size={14} color={colors.error} />
+                      <Text style={[styles.actionText, { color: colors.error }]}>Hapus</Text>
+                    </Pressable>
+                  </>
+                ) : editable ? (
+                  <View style={[styles.actionBtn, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Icon name="lock-closed-outline" size={12} color={colors.muted} />
+                    <Text style={[styles.actionText, { color: colors.muted }]}>Hanya lihat</Text>
+                  </View>
+                ) : null}
+              </View>
             </View>
           )}
         />
@@ -130,14 +192,134 @@ export default function KprScreen() {
         visible={showForm}
         onClose={() => setShowForm(false)}
         editing={editing}
+        user={user}
         onSaved={() => { setShowForm(false); qc.invalidateQueries({ queryKey: ["kpr"] }); }}
+      />
+      <HistoryModal kpr={historyOf} onClose={() => setHistoryOf(null)} />
+      <PutihkanModal
+        kpr={putihOf}
+        onClose={() => setPutihOf(null)}
+        onDone={() => { setPutihOf(null); qc.invalidateQueries({ queryKey: ["kpr"] }); qc.invalidateQueries({ queryKey: ["units_available"] }); }}
       />
     </View>
   );
 }
 
-function KprFormModal({ visible, onClose, editing, onSaved }: any) {
+function PutihkanModal({ kpr, onClose, onDone }: any) {
   const insets = useSafeAreaInsets();
+  const [alasan, setAlasan] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  React.useEffect(() => { setAlasan(""); setErr(null); }, [kpr]);
+
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    try { await api.putihkanKpr(kpr.id, alasan.trim()); onDone(); }
+    catch (e: any) { setErr(e?.message || "Gagal memutihkan"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal visible={!!kpr} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalWrap}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, justifyContent: "flex-end" }}>
+          <View style={[styles.modalCard, { paddingBottom: insets.bottom + spacing.lg }]} testID="putihkan-modal">
+            <View style={styles.modalHandle} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
+              <Text style={styles.modalTitle}>Putihkan Berkas</Text>
+              <Pressable onPress={onClose} hitSlop={8}><Icon name="close" size={24} color={colors.muted} /></Pressable>
+            </View>
+            <Text style={{ fontSize: 13, color: colors.onSurfaceSecondary, marginBottom: spacing.md }}>
+              Berkas <Text style={{ fontWeight: "700" }}>{kpr?.nama_konsumen}</Text> akan ditandai DIPUTIHKAN dan
+              Blok <Text style={{ fontWeight: "700" }}>{kpr?.blok_kavling}</Text> dilepas sehingga bisa diproses
+              konsumen baru beserta marketing pemrosesnya. Data berkas tetap tersimpan sebagai riwayat.
+            </Text>
+            <Field label="Alasan pemutihan" value={alasan} onChange={setAlasan} multiline testID="putihkan-alasan-input" />
+            {err && (
+              <View style={styles.errorBox}>
+                <Icon name="alert-circle" size={16} color={colors.error} />
+                <Text style={{ color: colors.error, flex: 1, fontSize: 13 }}>{err}</Text>
+              </View>
+            )}
+            <Pressable testID="putihkan-confirm-button" onPress={submit} disabled={busy}
+              style={[styles.saveBtn, { backgroundColor: colors.warning }, busy && { opacity: 0.6 }]}>
+              {busy ? <ActivityIndicator color={colors.onWarning} /> : <Text style={styles.saveBtnText}>Putihkan & Lepas Unit</Text>}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+function HistoryModal({ kpr, onClose }: any) {
+  const insets = useSafeAreaInsets();
+  const { data = [], isLoading } = useQuery({
+    queryKey: ["kpr_history", kpr?.id],
+    queryFn: () => api.kprHistory(kpr.id),
+    enabled: !!kpr,
+  });
+  return (
+    <Modal visible={!!kpr} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalWrap}>
+        <View style={{ flex: 1, justifyContent: "flex-end" }}>
+          <View style={[styles.modalCard, { paddingBottom: insets.bottom + spacing.lg }]} testID="history-modal">
+            <View style={styles.modalHandle} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Riwayat Perubahan</Text>
+                <Text style={styles.meta}>{kpr?.nama_konsumen} · Blok {kpr?.blok_kavling}</Text>
+              </View>
+              <Pressable onPress={onClose} hitSlop={8}><Icon name="close" size={24} color={colors.muted} /></Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={false}>
+              {isLoading ? (
+                <ActivityIndicator color={colors.brandPrimary} style={{ marginVertical: spacing.xl }} />
+              ) : data.length === 0 ? (
+                <Text style={{ color: colors.muted, textAlign: "center", marginVertical: spacing.xl }}>
+                  Belum ada riwayat perubahan
+                </Text>
+              ) : (
+                data.map((h: any, idx: number) => (
+                  <View key={h.id} style={styles.histRow}>
+                    <View style={styles.histLine}>
+                      <View style={[styles.histDot, idx === 0 && { backgroundColor: colors.brandPrimary }]} />
+                      {idx < data.length - 1 && <View style={styles.histBar} />}
+                    </View>
+                    <View style={{ flex: 1, paddingBottom: spacing.md }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: spacing.sm }}>
+                        <Text style={styles.histAksi}>
+                          {h.aksi === "DIBUAT" ? "Berkas dibuat" : h.aksi === "DIUBAH" ? "Diubah"
+                            : h.aksi === "DIPUTIHKAN" ? "Diputihkan (unit dilepas)"
+                            : h.aksi === "PEMUTIHAN DIBATALKAN" ? "Pemutihan dibatalkan" : h.aksi}
+                        </Text>
+                        <Text style={styles.histTime}>{formatDateTime(h.waktu)}</Text>
+                      </View>
+                      <Text style={styles.histBy}>oleh {h.nama || h.oleh}</Text>
+                      {!!h.catatan && <Text style={styles.histChange}>Alasan: {h.catatan}</Text>}
+                      {(h.perubahan || []).map((p: any, i: number) => (
+                        <Text key={i} style={styles.histChange}>
+                          <Text style={{ fontWeight: "700" }}>{p.field}: </Text>
+                          {p.dari ? `${p.dari} → ` : ""}
+                          <Text style={{ fontWeight: "700", color: colors.brandPrimary }}>{p.ke || "-"}</Text>
+                        </Text>
+                      ))}
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function KprFormModal({ visible, onClose, editing, onSaved, user }: any) {
+  const insets = useSafeAreaInsets();
+  const isMarketing = user?.role === "marketing";
+  const ownMarketing = isMarketing ? user?.marketing_name || "" : "";
   const [form, setForm] = useState<any>({
     nama_konsumen: "", blok_kavling: "", marketing: "", bank_pemroses: "",
     tanggal_booking: "", tahap_saat_ini: "", tanggal_sp3k: "", tanggal_akad: "", keterangan: "",
@@ -147,12 +329,12 @@ function KprFormModal({ visible, onClose, editing, onSaved }: any) {
 
   React.useEffect(() => {
     if (editing) setForm({ ...editing, tanggal_sp3k: editing.tanggal_sp3k || "", tanggal_akad: editing.tanggal_akad || "" });
-    else setForm({ nama_konsumen: "", blok_kavling: "", marketing: "", bank_pemroses: "",
+    else setForm({ nama_konsumen: "", blok_kavling: "", marketing: ownMarketing, bank_pemroses: "",
       tanggal_booking: new Date().toISOString().slice(0, 10), tahap_saat_ini: "", tanggal_sp3k: "", tanggal_akad: "", keterangan: "" });
     setErr(null);
-  }, [editing, visible]);
+  }, [editing, visible, ownMarketing]);
 
-  const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing"), enabled: visible });
+  const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing"), enabled: visible && !isMarketing });
   const banksQ = useQuery({ queryKey: ["list", "banks"], queryFn: () => api.getList("banks"), enabled: visible });
   const stagesQ = useQuery({ queryKey: ["list", "kpr_stages"], queryFn: () => api.getList("kpr_stages"), enabled: visible });
   const availQ = useQuery({ queryKey: ["units_available"], queryFn: () => api.availableUnits(), enabled: visible && !editing });
@@ -199,9 +381,19 @@ function KprFormModal({ visible, onClose, editing, onSaved }: any) {
                   onChange={(v) => setForm({ ...form, blok_kavling: v })}
                 />
               )}
-              <SelectField label="Marketing" value={form.marketing}
-                options={(marketingQ.data?.items || []).map((i: any) => ({ label: i.name, value: i.name }))}
-                onChange={(v) => setForm({ ...form, marketing: v })} />
+              {isMarketing ? (
+                <View style={{ marginBottom: spacing.md }}>
+                  <Text style={styles.fieldLabel}>Marketing</Text>
+                  <View style={[styles.fieldInput, { flexDirection: "row", alignItems: "center", gap: spacing.sm }]}>
+                    <Icon name="lock-closed-outline" size={14} color={colors.muted} />
+                    <Text style={{ color: colors.onSurface, fontSize: 14 }}>{ownMarketing}</Text>
+                  </View>
+                </View>
+              ) : (
+                <SelectField label="Marketing" value={form.marketing}
+                  options={(marketingQ.data?.items || []).map((i: any) => ({ label: i.name, value: i.name }))}
+                  onChange={(v) => setForm({ ...form, marketing: v })} />
+              )}
               <SelectField label="Bank Pemroses" value={form.bank_pemroses}
                 options={(banksQ.data?.items || []).map((i: any) => ({ label: i.name, value: i.name }))}
                 onChange={(v) => setForm({ ...form, bank_pemroses: v })} />
@@ -284,12 +476,23 @@ const styles = StyleSheet.create({
   cardFoot: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider },
   footText: { fontSize: 11, color: colors.muted },
   footBold: { fontWeight: "700", color: colors.onSurface },
-  actions: { flexDirection: "row", gap: spacing.sm, marginTop: 4 },
+  actions: { flexDirection: "row", gap: spacing.sm, marginTop: 4, flexWrap: "wrap" },
+  putihInfo: { flexDirection: "row", alignItems: "flex-start", gap: 6, backgroundColor: "#FEF2F2", padding: spacing.sm, borderRadius: radius.sm },
+  putihText: { flex: 1, fontSize: 11, color: colors.error, lineHeight: 15 },
   actionBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     backgroundColor: colors.brandSecondary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill,
   },
   actionText: { fontSize: 12, fontWeight: "600", color: colors.brandPrimary },
+
+  histRow: { flexDirection: "row", gap: spacing.md },
+  histLine: { width: 14, alignItems: "center" },
+  histDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.borderStrong, marginTop: 4 },
+  histBar: { flex: 1, width: 2, backgroundColor: colors.border, marginTop: 2 },
+  histAksi: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  histTime: { fontSize: 11, color: colors.muted },
+  histBy: { fontSize: 11, color: colors.muted, marginBottom: 4 },
+  histChange: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
 
   modalWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
   modalCard: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg, maxHeight: "92%" },

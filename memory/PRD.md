@@ -31,4 +31,18 @@ Full-stack mobile (Expo) + web application for monitoring KPR subsidized housing
 - 8 sample units (A-01..A-05, B-01..B-03) with various construction stages
 - Default lists: Marketing (Rina/Budi/Siti/Agus), Banks (BTN/BRI/BNI/Mandiri/BJB), KPR stages (Pemberkasan→Akad), 11 Construction stages with milestones, 3 Legality statuses
 
-## Status: MVP Complete
+## Iterasi 2 (Juni 2026) - Selesai
+- Tema biru korporat (brand #1E3A8A / primary #1D4ED8) di theme.ts + design_guidelines.json
+- Role baru `marketing` (freelance): akun terikat `marketing_name` (dipilih dari daftar Pengaturan saat buat user). Hanya bisa tambah/ubah/hapus berkas atas nama sendiri; berkas lain read-only ("Hanya lihat")
+- Riwayat perubahan berkas KPR (`kpr_history`): DIBUAT / DIUBAH (field, dari → ke) / DIPUTIHKAN / PEMUTIHAN DIBATALKAN; modal "Riwayat" di tiap kartu
+- Pemutihan manual oleh Admin Utama/Admin KPR: `POST /api/kpr/{id}/putihkan` (alasan) → status DIPUTIHKAN & blok dilepas untuk konsumen baru; `POST /api/kpr/{id}/batal-putihkan` (hanya jika blok belum dipakai berkas aktif). Tidak bisa untuk SP3K/Akad
+- Foto timeline bangunan (`unit_photos`): semua foto tersimpan (tahap, %, catatan, pengunggah, waktu); galeri thumbnail + hapus
+- Dashboard: filter Bulan (12 bulan terakhir) & Marketing; tombol Export Excel/PDF
+- Laporan `GET /api/reports/monthly?format=xlsx|pdf&month&marketing` (openpyxl/reportlab). Cakupan per role: admin_utama = lengkap; admin_kpr & marketing = sheet KPR saja (marketing dipaksa filter nama sendiri); admin_bangunan = Progres Bangunan; admin_legal = Legalitas
+- Legalitas jadi tab utama (5 tab). Dokumen scan/foto/PDF per unit & proyek (`legality_docs`, Object Storage): upload/hapus admin_utama & admin_legal; semua role bisa unduh (`/api/files/{path}?download=`). Jenis dokumen dikelola di Pengaturan (`legality_doc_types`)
+- Login tidak lagi menampilkan kredensial default
+
+## Backlog
+- Import data existing dari 4 Google Sheets (menunggu link dari user)
+
+## Status: Iterasi 2 Complete

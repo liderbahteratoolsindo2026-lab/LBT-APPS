@@ -1,0 +1,32 @@
+{
+  "summary": "Iterasi 2 regression + fitur baru lolos menyeluruh. Backend: 31/31 pytest cases dan smoke_new_features.py PASS. Frontend (390x844 web preview) semua testID & flow baru verified: tema biru aktif, login tidak menampilkan kredensial default, 5 tab bar (Dashboard/Berkas KPR/Bangunan/Legalitas/Lainnya), Dashboard Filter Rekap dengan 12 bulan (month-all, month-2026-10..month-2025-12) + 5 chip marketing (Rina/Budi/Siti/Agus) yang mem-filter KPI, tombol export-xlsx (buka tab baru) dan export-pdf tersedia. Berkas KPR: add-kpr-button, history-btn-{blok} membuka history-modal menampilkan 'Berkas dibuat' lalu 'Diubah' dengan 'Tahap: Pemberkasan \u2192 Entry'. Legalitas: tab Per Unit/Proyek (legal-tab-unit, legal-tab-project), legal-card-A-02 membuka legal-unit-modal, komponen legal-docs-unit-A-02 upload PDF via legal-file-btn + download-doc-{id} berjalan (file terunduh ber-header Content-Disposition attachment). Marketing (rina_mkt/Rina@123): subtitle 'Marketing Rina', form Tambah menampilkan field Marketing terkunci (ikon gembok + 'Rina'), berkas marketing lain berlabel 'Hanya lihat' tanpa Ubah/Hapus, Legalitas modal read-only (save-legality-button & legal-file-btn hilang) tapi download-doc tetap ada, Bangunan modal save-unit-button & camera-button hilang, Lainnya hanya 'Tabel Gabungan Unit' + 'Keluar' (tidak ada Kelola User/Pengaturan). Bangunan: unit-card-{blok} membuka modal; upload PNG via Galeri (expo-document/image-picker web <input type=file>) membuat Galeri Timeline dengan photo-thumb-{id}, delete-photo-btn berfungsi. Tidak ada red screen / page error. Tidak ada paket Expo deprecated (expo-av/expo-barcode-scanner/expo-background-fetch) yang digunakan.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard", "issues": ["Tombol export-xlsx berwarna hijau (#16A34A) dan export-pdf merah mungkin disengaja sebagai pembeda semantik Excel/PDF; jika ingin konsisten tema biru pertimbangkan menyamakan ke brandPrimary. Non-blocking."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_mahkota_kpr.py",
+    "/app/backend/tests/smoke_new_features.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "legal-docs.tsx: tombol 'Galeri' belum punya testID (hanya legal-camera-btn dan legal-file-btn). Jika ingin otomasi klik Galeri secara andal, tambahkan testID='legal-gallery-btn'.",
+    "legal-docs.tsx: kondisi `Platform.OS !== 'web'` menyembunyikan tombol Kamera di web, bagus. Namun bangunan.tsx tetap memperlihatkan camera-button di web (expo-image-picker launchCameraAsync di web memerlukan HTTPS + permission); boleh dibiarkan karena preview memang HTTPS, tapi di beberapa browser bisa gagal diam-diam.",
+    "server.py sudah menembus ~1000+ baris pasca iterasi 2 (reports, legality docs, history). Pertimbangkan memecah ke routers/kpr.py, routers/legality.py, routers/reports.py untuk maintainability.",
+    "Konten download dokumen legalitas memakai query param ?download=nama untuk melewati Bearer; sudah ter-expose public tapi path file adalah UUID random sehingga sulit ditebak - acceptable untuk konteks internal."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (31/31 pytest + smoke)", "frontend": "100% flow iterasi 2 tereksekusi (admin + marketing)"},
+  "seed_data_creation": "Tidak ada seed data residu. TEST History Konsumen (KPR A-02) dan dokumen legalitas sample.pdf sudah dihapus pasca test. User rina_mkt tetap ada (dibuat oleh smoke test, kredensial di /app/memory/test_credentials.md).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Pakai EXPO_PUBLIC_BACKEND_URL (https://bangun-pantau-1.preview.emergentagent.com). Admin admin/Admin@123, Marketing rina_mkt/Rina@123 (marketing_name Rina). Smoke script: python /app/backend/tests/smoke_new_features.py. Pytest: cd /app/backend/tests && python -m pytest -v. TestID map iterasi 2: month-{YYYY-MM|all}, marketing-{Name|all}, export-xlsx, export-pdf, reset-filter, history-btn-{blok}, history-modal, legal-tab-unit, legal-tab-project, legal-card-{blok}, legal-unit-modal, legal-docs-{scope}-{blok|project}, legal-doc-{id}, download-doc-{id}, legal-file-btn, legal-camera-btn (native only), photo-thumb-{id}, delete-photo-btn, camera-button, save-unit-button, save-kpr-button, save-legality-button, add-kpr-button, edit-btn-{blok}, kpr-card-{blok}, unit-card-{blok}, kpi-{label}, logout-button, create-user-btn, marketing-opt-{name}. Untuk upload file di web, gunakan page.expect_file_chooser lalu set_files; tombol Galeri di legal-docs belum punya testID (gunakan page.get_by_text('Galeri') atau fallback ke input[type=file]).",
+  "rca_of_issue": "N/A - semua test lolos."
+}

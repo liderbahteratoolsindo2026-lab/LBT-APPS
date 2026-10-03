@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
@@ -6,26 +6,54 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import Icon from "@react-native-vector-icons/ionicons";
 import { api } from "@/src/api";
-import { useAuth } from "@/src/auth-context";
-import { colors, spacing, radius } from "@/src/theme";
-import { Badge, statusToKind } from "@/src/badge";
+import { useAuth, roleLabel } from "@/src/auth-context";
+import { colors, spacing, radius, heroGradient } from "@/src/theme";
+import { downloadReport, monthLabel, recentMonths } from "@/src/report-utils";
+
+const MONTHS = recentMonths(12);
+
+function reportScopeLabel(role?: string) {
+  switch (role) {
+    case "admin_utama": return "Laporan lengkap (KPR, Bangunan, Legalitas)";
+    case "admin_bangunan": return "Laporan Progres Bangunan";
+    case "admin_legal": return "Laporan Legalitas";
+    default: return "Laporan Berkas KPR";
+  }
+}
 
 export default function Dashboard() {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
+  const [month, setMonth] = useState<string>("");
+  const [marketing, setMarketing] = useState<string>("");
+  const [exporting, setExporting] = useState<"" | "xlsx" | "pdf">("");
+  const [exportErr, setExportErr] = useState<string | null>(null);
+
   const { data, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: () => api.dashboard(),
+    queryKey: ["dashboard", month, marketing],
+    queryFn: () => api.dashboard({ month: month || undefined, marketing: marketing || undefined }),
   });
   const projectInfoQ = useQuery({
     queryKey: ["project_info"],
     queryFn: () => api.getConfig("project_info"),
   });
+  const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing") });
 
   const projectName = projectInfoQ.data?.value?.project_name || "Mahkota Graha";
   const companyName = projectInfoQ.data?.value?.company_name || "PT Lider Bahtera Toolsindo";
 
   const kpi = data?.kpi;
+
+  const doExport = async (format: "xlsx" | "pdf") => {
+    setExporting(format); setExportErr(null);
+    try {
+      await downloadReport({ month: month || undefined, marketing: marketing || undefined, format });
+    } catch (e: any) {
+      setExportErr(e?.message || "Gagal mengunduh laporan");
+    } finally {
+      setExporting("");
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -43,7 +71,7 @@ export default function Dashboard() {
             contentFit="cover"
           />
           <LinearGradient
-            colors={["rgba(15,62,58,0.5)", "rgba(15,62,58,0.95)"]}
+            colors={heroGradient}
             style={StyleSheet.absoluteFill}
           />
           <View style={[styles.heroContent, { paddingTop: insets.top + spacing.lg }]}>
@@ -63,6 +91,45 @@ export default function Dashboard() {
           </View>
         </View>
 
+        {/* Filter & Export */}
+        <View style={styles.filterCard}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={styles.filterTitle}>Filter Rekap</Text>
+            {(month || marketing) ? (
+              <Pressable testID="reset-filter" onPress={() => { setMonth(""); setMarketing(""); }} hitSlop={8}>
+                <Text style={{ fontSize: 12, color: colors.brandPrimary, fontWeight: "600" }}>Reset</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+            <Chip label="Semua Bulan" active={!month} onPress={() => setMonth("")} testID="month-all" />
+            {MONTHS.map((m) => (
+              <Chip key={m} label={monthLabel(m)} active={month === m} onPress={() => setMonth(m)} testID={`month-${m}`} />
+            ))}
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+            <Chip label="Semua Marketing" active={!marketing} onPress={() => setMarketing("")} testID="marketing-all" />
+            {(marketingQ.data?.items || []).map((m: any) => (
+              <Chip key={m.id} label={m.name} active={marketing === m.name} onPress={() => setMarketing(m.name)} testID={`marketing-${m.name}`} />
+            ))}
+          </ScrollView>
+          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+            <Pressable testID="export-xlsx" onPress={() => doExport("xlsx")} disabled={!!exporting} style={styles.exportBtn}>
+              {exporting === "xlsx" ? <ActivityIndicator size="small" color={colors.onBrandPrimary} /> : <Icon name="grid-outline" size={15} color={colors.onBrandPrimary} />}
+              <Text style={styles.exportText}>Excel</Text>
+            </Pressable>
+            <Pressable testID="export-pdf" onPress={() => doExport("pdf")} disabled={!!exporting} style={[styles.exportBtn, { backgroundColor: colors.error }]}>
+              {exporting === "pdf" ? <ActivityIndicator size="small" color={colors.onError} /> : <Icon name="document-text-outline" size={15} color={colors.onError} />}
+              <Text style={styles.exportText}>PDF</Text>
+            </Pressable>
+            <Text style={{ fontSize: 11, color: colors.muted, flex: 1 }} numberOfLines={2}>
+              {reportScopeLabel(user?.role)} · {month ? monthLabel(month) : "semua periode"}
+              {user?.role === "marketing" ? ` · ${user.marketing_name}` : marketing ? ` · ${marketing}` : ""}
+            </Text>
+          </View>
+          {exportErr && <Text style={{ color: colors.error, fontSize: 12 }}>{exportErr}</Text>}
+        </View>
+
         {isLoading ? (
           <View style={{ padding: spacing.xxl, alignItems: "center" }}>
             <ActivityIndicator color={colors.brandPrimary} />
@@ -72,11 +139,11 @@ export default function Dashboard() {
             {/* KPI Grid */}
             <View style={styles.kpiGrid}>
               <KpiCard label="Total Berkas" value={kpi?.total ?? 0} icon="folder" color={colors.brandPrimary} />
-              <KpiCard label="Proses" value={kpi?.proses ?? 0} icon="time" color="#D97706" />
-              <KpiCard label="SP3K" value={kpi?.sp3k ?? 0} icon="checkmark-done" color="#0C4A6E" />
+              <KpiCard label="Proses" value={kpi?.proses ?? 0} icon="time" color={colors.warning} />
+              <KpiCard label="SP3K" value={kpi?.sp3k ?? 0} icon="checkmark-done" color={colors.info} />
               <KpiCard label="Done (Akad)" value={kpi?.done ?? 0} icon="trophy" color={colors.success} />
               <KpiCard label="Diputihkan" value={kpi?.diputihkan ?? 0} icon="close-circle" color={colors.error} />
-              <KpiCard label="Jatuh Tempo" value={kpi?.nearing_count ?? 0} icon="warning" color="#DC2626" />
+              <KpiCard label="Jatuh Tempo" value={kpi?.nearing_count ?? 0} icon="warning" color={colors.error} />
             </View>
 
             {/* Indicators */}
@@ -163,14 +230,12 @@ export default function Dashboard() {
   );
 }
 
-function roleLabel(role?: string) {
-  switch (role) {
-    case "admin_utama": return "Admin Utama";
-    case "admin_kpr": return "Admin KPR";
-    case "admin_legal": return "Admin Legal";
-    case "admin_bangunan": return "Admin Bangunan";
-    default: return "Admin";
-  }
+function Chip({ label, active, onPress, testID }: any) {
+  return (
+    <Pressable onPress={onPress} testID={testID} style={[styles.chip, active && styles.chipActive]}>
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+    </Pressable>
+  );
 }
 
 function KpiCard({ label, value, icon, color }: any) {
@@ -198,7 +263,7 @@ function UnitStat({ label, value, tone }: any) {
   const color = tone === "success" ? colors.success
     : tone === "warning" ? colors.warning
     : tone === "error" ? colors.error
-    : tone === "info" ? "#0C4A6E"
+    : tone === "info" ? colors.info
     : tone === "muted" ? colors.muted
     : colors.onSurface;
   return (
@@ -221,6 +286,19 @@ const styles = StyleSheet.create({
   },
   roleText: { color: "#FFF", fontSize: 11, fontWeight: "600" },
   logoutBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+
+  filterCard: {
+    marginHorizontal: spacing.lg, marginTop: -spacing.lg, backgroundColor: colors.surface, borderRadius: radius.md,
+    padding: spacing.md, gap: spacing.sm, borderWidth: 1, borderColor: colors.border,
+    shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 2,
+  },
+  filterTitle: { fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary, textTransform: "uppercase", letterSpacing: 0.3 },
+  chip: { paddingHorizontal: spacing.md, height: 32, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  chipText: { fontSize: 12, color: colors.onSurface, fontWeight: "600" },
+  chipTextActive: { color: colors.onBrandPrimary },
+  exportBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.success, paddingHorizontal: spacing.md, height: 36, borderRadius: radius.md },
+  exportText: { color: colors.onBrandPrimary, fontSize: 12, fontWeight: "700" },
 
   kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   kpiCard: {

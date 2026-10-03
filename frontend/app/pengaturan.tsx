@@ -13,6 +13,7 @@ const LIST_CONFIGS: { key: string; title: string; hasPercent?: boolean }[] = [
   { key: "kpr_stages", title: "Tahapan Berkas KPR" },
   { key: "construction_stages", title: "Tahapan Konstruksi", hasPercent: true },
   { key: "legality_status", title: "Status Dokumen Legalitas" },
+  { key: "legality_doc_types", title: "Jenis Dokumen Legalitas (Upload)" },
 ];
 
 export default function Pengaturan() {

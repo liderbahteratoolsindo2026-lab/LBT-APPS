@@ -14,14 +14,14 @@ const light = {
   onSurfaceInverse: "#FFFFFF",
   muted: "#71717A",
 
-  brand: "#0F3E3A",
+  brand: "#1E3A8A",
   onBrand: "#FFFFFF",
-  brandPrimary: "#134E4A",
+  brandPrimary: "#1D4ED8",
   onBrandPrimary: "#FFFFFF",
-  brandSecondary: "#F0FDF4",
-  onBrandSecondary: "#14532D",
-  brandTertiary: "#E0F2FE",
-  onBrandTertiary: "#0C4A6E",
+  brandSecondary: "#EFF6FF",
+  onBrandSecondary: "#1E3A8A",
+  brandTertiary: "#DBEAFE",
+  onBrandTertiary: "#1E40AF",
 
   success: "#16A34A",
   onSuccess: "#FFFFFF",
@@ -29,7 +29,7 @@ const light = {
   onWarning: "#FFFFFF",
   error: "#DC2626",
   onError: "#FFFFFF",
-  info: "#0C4A6E",
+  info: "#2563EB",
   onInfo: "#FFFFFF",
 
   border: "#E4E4E7",
@@ -81,3 +81,6 @@ export const radius = {
 };
 
 export const colors = themes.light;
+
+/** Gradien overlay hero (biru korporat) */
+export const heroGradient: [string, string] = ["rgba(30,58,138,0.45)", "rgba(30,58,138,0.95)"];

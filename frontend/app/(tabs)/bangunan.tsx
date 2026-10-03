@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import {
   View, Text, StyleSheet, FlatList, Pressable, Modal, ScrollView, ActivityIndicator,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as ImagePicker from "expo-image-picker";
 import { Image } from "expo-image";
 import Icon from "@react-native-vector-icons/ionicons";
@@ -13,6 +13,7 @@ import { useAuth, canEdit } from "@/src/auth-context";
 import { colors, spacing, radius } from "@/src/theme";
 import { Badge, statusToKind } from "@/src/badge";
 import { Field, SelectField } from "./kpr";
+import { formatDateTime } from "@/src/report-utils";
 
 export default function BangunanScreen() {
   const insets = useSafeAreaInsets();
@@ -78,11 +79,24 @@ export default function BangunanScreen() {
 
 function UnitDetail({ unit, editable, onClose, onSaved }: any) {
   const insets = useSafeAreaInsets();
+  const qc = useQueryClient();
   const [form, setForm] = useState<any>({});
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [activePhoto, setActivePhoto] = useState<any>(null);
+  const [catatanFoto, setCatatanFoto] = useState("");
+
+  useEffect(() => { api.getToken().then(setToken); }, []);
+
+  const photosQ = useQuery({
+    queryKey: ["unit_photos", unit?.blok_kavling],
+    queryFn: () => api.listPhotos(unit.blok_kavling),
+    enabled: !!unit,
+  });
+  const photos: any[] = photosQ.data || [];
+  const shown = activePhoto || photos[0] || null;
 
   useEffect(() => {
     if (unit) {
@@ -97,11 +111,8 @@ function UnitDetail({ unit, editable, onClose, onSaved }: any) {
         link_foto_dokumentasi: unit.link_foto_dokumentasi || "",
       });
       setErr(null);
-      if (unit.foto_path) {
-        api.fileUrl(unit.foto_path).then(setPhotoUrl);
-      } else {
-        setPhotoUrl(null);
-      }
+      setActivePhoto(null);
+      setCatatanFoto("");
     }
   }, [unit]);
 
@@ -128,13 +139,26 @@ function UnitDetail({ unit, editable, onClose, onSaved }: any) {
     try {
       const name = asset.fileName || `photo-${Date.now()}.jpg`;
       const type = asset.mimeType || "image/jpeg";
-      const resp = await api.uploadPhoto(unit.blok_kavling, asset.uri, name, type);
-      const url = await api.fileUrl(resp.path);
-      setPhotoUrl(url);
+      const resp = await api.uploadPhoto(unit.blok_kavling, asset.uri, name, type, catatanFoto.trim());
+      setCatatanFoto("");
+      setActivePhoto(resp.photo || null);
+      await qc.invalidateQueries({ queryKey: ["unit_photos", unit.blok_kavling] });
+      qc.invalidateQueries({ queryKey: ["units"] });
     } catch (e: any) {
       setErr(e?.message || "Upload gagal");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const removePhoto = async (p: any) => {
+    try {
+      await api.deletePhoto(unit.blok_kavling, p.id);
+      if (activePhoto?.id === p.id) setActivePhoto(null);
+      await qc.invalidateQueries({ queryKey: ["unit_photos", unit.blok_kavling] });
+      qc.invalidateQueries({ queryKey: ["units"] });
+    } catch (e: any) {
+      setErr(e?.message || "Gagal menghapus foto");
     }
   };
 
@@ -166,28 +190,78 @@ function UnitDetail({ unit, editable, onClose, onSaved }: any) {
               <Pressable onPress={onClose} hitSlop={8}><Icon name="close" size={24} color={colors.muted} /></Pressable>
             </View>
             <ScrollView style={{ maxHeight: 540 }} showsVerticalScrollIndicator={false}>
-              {/* Photo */}
+              {/* Foto Timeline */}
               <View style={styles.photoBox}>
-                {photoUrl ? (
-                  <Image source={{ uri: photoUrl, headers: Platform.OS !== "web" ? undefined : undefined }}
-                    style={{ width: "100%", height: 180, borderRadius: radius.sm }} contentFit="cover" />
+                {shown ? (
+                  <View>
+                    <Image source={{ uri: api.fileUrlWithToken(shown.path, token) }}
+                      style={{ width: "100%", height: 200, borderRadius: radius.sm }} contentFit="cover"
+                      transition={150} />
+                    <View style={styles.photoCaption}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.photoCapTitle}>
+                          {shown.tahap_konstruksi || "-"} · {shown.persen_progres ?? 0}%
+                        </Text>
+                        <Text style={styles.photoCapSub}>
+                          {formatDateTime(shown.uploaded_at)} · {shown.uploaded_name || shown.uploaded_by}
+                        </Text>
+                        {!!shown.catatan && <Text style={styles.photoCapSub}>{shown.catatan}</Text>}
+                      </View>
+                      {editable && (
+                        <Pressable onPress={() => removePhoto(shown)} hitSlop={8} testID="delete-photo-btn">
+                          <Icon name="trash-outline" size={18} color={colors.error} />
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
                 ) : (
                   <View style={styles.photoPlaceholder}>
                     <Icon name="camera" size={32} color={colors.muted} />
                     <Text style={{ color: colors.muted, marginTop: spacing.xs }}>Belum ada foto</Text>
                   </View>
                 )}
+
+                {photos.length > 0 && (
+                  <View style={{ marginTop: spacing.sm }}>
+                    <Text style={styles.timelineTitle}>Galeri Timeline ({photos.length} foto)</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }}>
+                      {photos.map((p) => {
+                        const active = shown?.id === p.id;
+                        return (
+                          <Pressable key={p.id} onPress={() => setActivePhoto(p)}
+                            style={[styles.thumbWrap, active && styles.thumbActive]} testID={`photo-thumb-${p.id}`}>
+                            <Image source={{ uri: api.fileUrlWithToken(p.path, token) }}
+                              style={styles.thumb} contentFit="cover" />
+                            <Text style={styles.thumbDate} numberOfLines={1}>{(p.uploaded_at || "").slice(0, 10)}</Text>
+                            <Text style={styles.thumbStage} numberOfLines={1}>{p.persen_progres ?? 0}%</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
                 {editable && (
-                  <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm }}>
-                    <Pressable testID="camera-button" onPress={pickFromCamera} style={styles.photoBtn} disabled={uploading}>
-                      <Icon name="camera" size={16} color={colors.onBrandPrimary} />
-                      <Text style={styles.photoBtnText}>Kamera</Text>
-                    </Pressable>
-                    <Pressable onPress={pickFromGallery} style={[styles.photoBtn, { backgroundColor: colors.surfaceTertiary }]} disabled={uploading}>
-                      <Icon name="images" size={16} color={colors.onSurface} />
-                      <Text style={[styles.photoBtnText, { color: colors.onSurface }]}>Galeri</Text>
-                    </Pressable>
-                    {uploading && <ActivityIndicator color={colors.brandPrimary} />}
+                  <View style={{ marginTop: spacing.sm, gap: spacing.sm }}>
+                    <TextInput
+                      value={catatanFoto}
+                      onChangeText={setCatatanFoto}
+                      placeholder="Catatan foto (opsional)"
+                      placeholderTextColor={colors.muted}
+                      style={styles.catatanInput}
+                    />
+                    <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+                      <Pressable testID="camera-button" onPress={pickFromCamera} style={styles.photoBtn} disabled={uploading}>
+                        <Icon name="camera" size={16} color={colors.onBrandPrimary} />
+                        <Text style={styles.photoBtnText}>Kamera</Text>
+                      </Pressable>
+                      <Pressable onPress={pickFromGallery} style={[styles.photoBtn, { backgroundColor: colors.surfaceTertiary }]} disabled={uploading}>
+                        <Icon name="images" size={16} color={colors.onSurface} />
+                        <Text style={[styles.photoBtnText, { color: colors.onSurface }]}>Galeri</Text>
+                      </Pressable>
+                      {uploading && <ActivityIndicator color={colors.brandPrimary} />}
+                    </View>
                   </View>
                 )}
               </View>
@@ -236,6 +310,23 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: "800", color: colors.onSurface },
 
   photoBox: { marginBottom: spacing.lg },
+  photoCaption: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    backgroundColor: colors.brandSecondary, padding: spacing.sm, borderBottomLeftRadius: radius.sm, borderBottomRightRadius: radius.sm,
+    marginTop: -radius.sm, paddingTop: spacing.sm + radius.sm / 2,
+  },
+  photoCapTitle: { fontSize: 12, fontWeight: "700", color: colors.onBrandSecondary },
+  photoCapSub: { fontSize: 11, color: colors.muted, marginTop: 1 },
+  timelineTitle: { fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2 },
+  thumbWrap: { width: 84, borderRadius: radius.sm, borderWidth: 2, borderColor: "transparent", padding: 2 },
+  thumbActive: { borderColor: colors.brandPrimary },
+  thumb: { width: 76, height: 60, borderRadius: 4, backgroundColor: colors.surfaceTertiary },
+  thumbDate: { fontSize: 10, color: colors.onSurfaceSecondary, marginTop: 2, fontWeight: "600" },
+  thumbStage: { fontSize: 10, color: colors.muted },
+  catatanInput: {
+    backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm, paddingHorizontal: spacing.md,
+    paddingVertical: 8, color: colors.onSurface, fontSize: 13, borderWidth: 1, borderColor: colors.border, outlineWidth: 0 as any,
+  },
   photoPlaceholder: {
     height: 180, backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm,
     alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderStyle: "dashed",

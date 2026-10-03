@@ -1,9 +1,9 @@
-import React, { useState } from "react";
+import React from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Icon from "@react-native-vector-icons/ionicons";
-import { useAuth } from "@/src/auth-context";
+import { useAuth, roleLabel } from "@/src/auth-context";
 import { colors, spacing, radius } from "@/src/theme";
 
 export default function More() {
@@ -16,10 +16,9 @@ export default function More() {
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
         <Text style={styles.h1}>Lainnya</Text>
-        <Text style={styles.subtitle}>{user?.name} · {user?.role}</Text>
+        <Text style={styles.subtitle}>{user?.name} · {roleLabel(user?.role)}{user?.marketing_name ? ` (${user.marketing_name})` : ""}</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: 120 }}>
-        <Row icon="shield-checkmark" label="Legalitas" onPress={() => router.push("/legalitas")} testID="go-legalitas" />
         <Row icon="list" label="Tabel Gabungan Unit" onPress={() => router.push("/tabel-unit")} testID="go-table" />
         {isAdmin && (
           <>

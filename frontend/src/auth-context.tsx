@@ -64,8 +64,25 @@ export const useAuth = () => useContext(AuthContext);
 export const canEdit = (role: string | undefined, module: "kpr" | "unit" | "legal" | "settings") => {
   if (role === "admin_utama") return true;
   if (module === "settings") return false;
-  if (module === "kpr") return role === "admin_kpr";
+  if (module === "kpr") return role === "admin_kpr" || role === "marketing";
   if (module === "unit") return role === "admin_bangunan";
   if (module === "legal") return role === "admin_legal";
   return false;
 };
+
+/** Marketing freelance hanya boleh mengubah berkas atas nama marketingnya sendiri. */
+export const canEditKprItem = (user: User | null, item: { marketing?: string }) => {
+  if (!canEdit(user?.role, "kpr")) return false;
+  if (user?.role === "marketing") return !!user.marketing_name && item.marketing === user.marketing_name;
+  return true;
+};
+
+export const ROLE_LABELS: Record<string, string> = {
+  admin_utama: "Admin Utama",
+  admin_kpr: "Admin KPR",
+  admin_legal: "Admin Legal",
+  admin_bangunan: "Admin Bangunan",
+  marketing: "Marketing",
+};
+
+export const roleLabel = (role?: string) => (role && ROLE_LABELS[role]) || "Admin";

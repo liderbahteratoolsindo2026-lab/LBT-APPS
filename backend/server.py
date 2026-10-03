@@ -15,13 +15,15 @@ import bcrypt
 import jwt
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, status, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, status, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
+
+import reports
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -37,7 +39,7 @@ APP_NAME = os.environ.get("APP_NAME", "mahkota-graha-kpr")
 STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
 STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
 
-Role = Literal["admin_utama", "admin_kpr", "admin_legal", "admin_bangunan"]
+Role = Literal["admin_utama", "admin_kpr", "admin_legal", "admin_bangunan", "marketing"]
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -129,6 +131,7 @@ class UserCreate(BaseModel):
     password: str
     name: str
     role: Role
+    marketing_name: Optional[str] = None
 
 class SettingItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -219,6 +222,40 @@ def require_roles(*allowed: Role):
         return user
     return dep
 
+KPR_EDITORS: tuple = ("admin_utama", "admin_kpr", "marketing")
+
+def assert_marketing_scope(user: dict, marketing_name: Optional[str]):
+    """Role 'marketing' hanya boleh mengelola berkas atas nama marketingnya sendiri."""
+    if user["role"] != "marketing":
+        return
+    own = user.get("marketing_name")
+    if not own or marketing_name != own:
+        raise HTTPException(403, f"Anda hanya bisa mengelola berkas marketing '{own or '-'}'")
+
+async def log_kpr_history(kpr_id: str, user: dict, aksi: str, perubahan: list, catatan: str = ""):
+    await db.kpr_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "kpr_id": kpr_id,
+        "aksi": aksi,
+        "perubahan": perubahan,
+        "catatan": catatan,
+        "oleh": user["username"],
+        "nama": user.get("name", user["username"]),
+        "waktu": datetime.now(timezone.utc).isoformat(),
+    })
+
+KPR_TRACKED_FIELDS = {
+    "tahap_saat_ini": "Tahap",
+    "bank_pemroses": "Bank",
+    "tanggal_sp3k": "Tgl SP3K",
+    "tanggal_akad": "Tgl Akad",
+    "tanggal_booking": "Tgl Booking",
+    "marketing": "Marketing",
+    "blok_kavling": "Blok",
+    "nama_konsumen": "Nama Konsumen",
+    "keterangan": "Keterangan",
+}
+
 
 # ============== Seed ==============
 async def seed_defaults():
@@ -255,6 +292,8 @@ async def seed_defaults():
             {"name": "Serah Terima", "order": 10, "extra": {"percent": 100}},
         ],
         "legality_status": [{"name": n, "order": i} for i, n in enumerate(["Rencana", "Proses", "Done"])],
+        "legality_doc_types": [{"name": n, "order": i} for i, n in enumerate(
+            ["Sertifikat", "IMB/PBG", "PBB", "SSP/PPh", "BPHTB", "Sertifikat Tanah Induk", "PKKPR", "SLF", "Lainnya"])],
     }
     for key, items in defaults.items():
         if not await db.settings_lists.find_one({"key": key}):
@@ -352,6 +391,8 @@ async def compute_kpr_status(record: dict) -> dict:
 
     if akad or stage.lower() == "akad":
         status_ = "DONE"
+    elif record.get("diputihkan_manual"):
+        status_ = "DIPUTIHKAN"
     elif not has_sp3k and booking and (today - booking).days > pem_days:
         status_ = "DIPUTIHKAN"
     elif has_sp3k:
@@ -394,7 +435,8 @@ async def login(data: LoginIn):
     return TokenOut(
         access_token=make_token(user["username"]),
         expires_in=TOKEN_MIN * 60,
-        user={"username": user["username"], "name": user["name"], "role": user["role"]},
+        user={"username": user["username"], "name": user["name"], "role": user["role"],
+              "marketing_name": user.get("marketing_name")},
     )
 
 @api_router.get("/auth/me")
@@ -411,11 +453,14 @@ async def list_users(_=Depends(require_roles("admin_utama"))):
 async def create_user(data: UserCreate, _=Depends(require_roles("admin_utama"))):
     if await db.users.find_one({"username": data.username}):
         raise HTTPException(400, "Username sudah ada")
+    if data.role == "marketing" and not (data.marketing_name or "").strip():
+        raise HTTPException(400, "Pilih nama marketing untuk akun role Marketing")
     await db.users.insert_one({
         "username": data.username,
         "name": data.name,
         "password_hash": hash_password(data.password),
         "role": data.role,
+        "marketing_name": (data.marketing_name or "").strip() or None,
         "active": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -462,7 +507,8 @@ async def list_kpr(_=Depends(current_user)):
     return rows
 
 @api_router.post("/kpr")
-async def create_kpr(data: KprIn, user=Depends(require_roles("admin_utama", "admin_kpr"))):
+async def create_kpr(data: KprIn, user=Depends(require_roles(*KPR_EDITORS))):
+    assert_marketing_scope(user, data.marketing)
     # Validate unit: construction started AND unit not used by other
     unit = await db.units.find_one({"blok_kavling": data.blok_kavling})
     if not unit:
@@ -470,35 +516,107 @@ async def create_kpr(data: KprIn, user=Depends(require_roles("admin_utama", "adm
     pct = await get_construction_percent(unit.get("tahap_konstruksi", ""))
     if pct == 0:
         raise HTTPException(400, "Unit belum mulai dibangun (0%)")
-    existing = await db.kpr.find_one({"blok_kavling": data.blok_kavling})
-    if existing:
-        enriched = await compute_kpr_status(dict(existing))
-        if enriched["status"] not in ("DIPUTIHKAN",):
-            raise HTTPException(400, f"Unit sudah dipakai konsumen: {existing['nama_konsumen']}")
+    active = await _active_kpr_for_blok(data.blok_kavling)
+    if active:
+        raise HTTPException(400, f"Unit sudah dipakai konsumen: {active['nama_konsumen']}")
     rec = data.dict()
     rec["id"] = str(uuid.uuid4())
     rec["tanggal_update_terakhir"] = datetime.now(timezone.utc).isoformat()
     rec["created_by"] = user["username"]
     await db.kpr.insert_one(rec)
     rec.pop("_id", None)
+    await log_kpr_history(rec["id"], user, "DIBUAT",
+                          [{"field": "Tahap", "dari": None, "ke": rec["tahap_saat_ini"]}])
     return rec
 
 @api_router.put("/kpr/{kpr_id}")
-async def update_kpr(kpr_id: str, data: KprIn, _=Depends(require_roles("admin_utama", "admin_kpr"))):
+async def update_kpr(kpr_id: str, data: KprIn, user=Depends(require_roles(*KPR_EDITORS))):
     existing = await db.kpr.find_one({"id": kpr_id})
     if not existing:
         raise HTTPException(404, "Tidak ditemukan")
+    assert_marketing_scope(user, existing.get("marketing"))
+    assert_marketing_scope(user, data.marketing)
     new_data = data.dict()
+    changes = []
+    for f, label in KPR_TRACKED_FIELDS.items():
+        if (new_data.get(f) or None) != (existing.get(f) or None):
+            changes.append({"field": label, "dari": existing.get(f), "ke": new_data.get(f)})
     if new_data.get("tahap_saat_ini") != existing.get("tahap_saat_ini"):
         new_data["tanggal_update_terakhir"] = datetime.now(timezone.utc).isoformat()
     await db.kpr.update_one({"id": kpr_id}, {"$set": new_data})
+    if changes:
+        await log_kpr_history(kpr_id, user, "DIUBAH", changes)
     return {"ok": True}
 
-@api_router.delete("/kpr/{kpr_id}")
-async def delete_kpr(kpr_id: str, user=Depends(require_roles("admin_utama", "admin_kpr"))):
+@api_router.get("/kpr/{kpr_id}/history")
+async def kpr_history(kpr_id: str, _=Depends(current_user)):
+    rows = await db.kpr_history.find({"kpr_id": kpr_id}, {"_id": 0}).sort("waktu", -1).to_list(500)
+    return rows
+
+class PemutihanIn(BaseModel):
+    alasan: str = ""
+
+async def _active_kpr_for_blok(blok: str, exclude_id: Optional[str] = None) -> Optional[dict]:
+    """Berkas aktif (bukan DIPUTIHKAN) yang memakai blok ini."""
+    rows = await db.kpr.find({"blok_kavling": blok}, {"_id": 0}).to_list(100)
+    for r in rows:
+        if exclude_id and r["id"] == exclude_id:
+            continue
+        await compute_kpr_status(r)
+        if r["status"] != "DIPUTIHKAN":
+            return r
+    return None
+
+@api_router.post("/kpr/{kpr_id}/putihkan")
+async def putihkan_kpr(kpr_id: str, body: PemutihanIn, user=Depends(require_roles("admin_utama", "admin_kpr"))):
+    """Pemutihan manual: berkas dibatalkan & blok/kavling dilepas agar bisa dipakai konsumen baru."""
     rec = await db.kpr.find_one({"id": kpr_id}, {"_id": 0})
     if not rec:
         raise HTTPException(404, "Tidak ditemukan")
+    await compute_kpr_status(rec)
+    if rec["status"] == "DONE":
+        raise HTTPException(400, "Berkas sudah akad, tidak bisa diputihkan")
+    if rec["has_sp3k"]:
+        raise HTTPException(400, "Berkas sudah SP3K, tidak bisa diputihkan")
+    if rec["status"] == "DIPUTIHKAN" and rec.get("diputihkan_manual"):
+        raise HTTPException(400, "Berkas sudah diputihkan")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.kpr.update_one({"id": kpr_id}, {"$set": {
+        "diputihkan_manual": True, "tanggal_pemutihan": now,
+        "alasan_pemutihan": body.alasan.strip(), "diputihkan_oleh": user["username"],
+        "tanggal_update_terakhir": now,
+    }})
+    await log_kpr_history(kpr_id, user, "DIPUTIHKAN",
+                          [{"field": "Status", "dari": rec["status"], "ke": "DIPUTIHKAN"},
+                           {"field": "Blok", "dari": rec["blok_kavling"], "ke": f"{rec['blok_kavling']} dilepas (tersedia)"}],
+                          catatan=body.alasan.strip())
+    return {"ok": True, "blok_kavling": rec["blok_kavling"]}
+
+@api_router.post("/kpr/{kpr_id}/batal-putihkan")
+async def batal_putihkan_kpr(kpr_id: str, user=Depends(require_roles("admin_utama", "admin_kpr"))):
+    """Batalkan pemutihan manual; hanya jika blok belum dipakai berkas aktif lain."""
+    rec = await db.kpr.find_one({"id": kpr_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Tidak ditemukan")
+    if not rec.get("diputihkan_manual"):
+        raise HTTPException(400, "Berkas ini tidak diputihkan secara manual")
+    other = await _active_kpr_for_blok(rec["blok_kavling"], exclude_id=kpr_id)
+    if other:
+        raise HTTPException(400, f"Blok {rec['blok_kavling']} sudah dipakai konsumen baru: {other['nama_konsumen']}")
+    await db.kpr.update_one({"id": kpr_id}, {
+        "$unset": {"diputihkan_manual": "", "tanggal_pemutihan": "", "alasan_pemutihan": "", "diputihkan_oleh": ""},
+        "$set": {"tanggal_update_terakhir": datetime.now(timezone.utc).isoformat()},
+    })
+    await log_kpr_history(kpr_id, user, "PEMUTIHAN DIBATALKAN",
+                          [{"field": "Status", "dari": "DIPUTIHKAN", "ke": "aktif kembali"}])
+    return {"ok": True}
+
+@api_router.delete("/kpr/{kpr_id}")
+async def delete_kpr(kpr_id: str, user=Depends(require_roles(*KPR_EDITORS))):
+    rec = await db.kpr.find_one({"id": kpr_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Tidak ditemukan")
+    assert_marketing_scope(user, rec.get("marketing"))
     await db.kpr_deleted_log.insert_one({
         "deleted_at": datetime.now(timezone.utc).isoformat(),
         "deleted_by": user["username"],
@@ -553,7 +671,7 @@ async def update_unit(blok: str, data: UnitIn, _=Depends(require_roles("admin_ut
     return {"ok": True}
 
 @api_router.post("/units/{blok}/photo")
-async def upload_unit_photo(blok: str, file: UploadFile = File(...),
+async def upload_unit_photo(blok: str, file: UploadFile = File(...), catatan: str = Form(""),
                              user=Depends(require_roles("admin_utama", "admin_bangunan"))):
     unit = await db.units.find_one({"blok_kavling": blok})
     if not unit:
@@ -569,13 +687,41 @@ async def upload_unit_photo(blok: str, file: UploadFile = File(...),
     except Exception as e:
         logger.exception("Upload failed")
         raise HTTPException(500, f"Upload gagal: {e}")
-    await db.units.update_one({"blok_kavling": blok}, {"$set": {
-        "foto_path": path, "updated_at": datetime.now(timezone.utc).isoformat()
-    }})
-    return {"ok": True, "path": path}
+    now = datetime.now(timezone.utc).isoformat()
+    stage = unit.get("tahap_konstruksi", "")
+    photo = {
+        "id": str(uuid.uuid4()),
+        "blok_kavling": blok,
+        "path": path,
+        "tahap_konstruksi": stage,
+        "persen_progres": await get_construction_percent(stage),
+        "catatan": catatan or "",
+        "uploaded_by": user["username"],
+        "uploaded_name": user.get("name", user["username"]),
+        "uploaded_at": now,
+    }
+    await db.unit_photos.insert_one(dict(photo))
+    await db.units.update_one({"blok_kavling": blok}, {"$set": {"foto_path": path, "updated_at": now}})
+    return {"ok": True, "path": path, "photo": photo}
+
+@api_router.get("/units/{blok}/photos")
+async def list_unit_photos(blok: str, _=Depends(current_user)):
+    rows = await db.unit_photos.find({"blok_kavling": blok}, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
+    return rows
+
+@api_router.delete("/units/{blok}/photos/{photo_id}")
+async def delete_unit_photo(blok: str, photo_id: str, _=Depends(require_roles("admin_utama", "admin_bangunan"))):
+    photo = await db.unit_photos.find_one({"id": photo_id, "blok_kavling": blok})
+    if not photo:
+        raise HTTPException(404, "Foto tidak ditemukan")
+    await db.unit_photos.delete_one({"id": photo_id})
+    latest = await db.unit_photos.find_one({"blok_kavling": blok}, sort=[("uploaded_at", -1)])
+    await db.units.update_one({"blok_kavling": blok},
+                              {"$set": {"foto_path": latest["path"] if latest else None}})
+    return {"ok": True}
 
 @api_router.get("/files/{path:path}")
-async def get_file(path: str, token: Optional[str] = Query(None),
+async def get_file(path: str, token: Optional[str] = Query(None), download: Optional[str] = Query(None),
                    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer)] = None):
     # Accept either bearer header or token query param (for web <img>)
     jwt_token = None
@@ -593,7 +739,10 @@ async def get_file(path: str, token: Optional[str] = Query(None),
         content, ctype = await run_in_threadpool(_get_object_sync, path)
     except Exception:
         raise HTTPException(404, "File not found")
-    return Response(content=content, media_type=ctype)
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{download}"'
+    return Response(content=content, media_type=ctype, headers=headers)
 
 # ============== Legality ==============
 @api_router.get("/legality/units")
@@ -624,10 +773,74 @@ async def put_legality_project(data: LegalityProjectIn,
         {"$set": {**data.dict(), "updated_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
     return {"ok": True}
 
+# --- Dokumen legalitas (scan/foto) ---
+LEGAL_DOC_EXT = {"jpg", "jpeg", "png", "webp", "heic", "pdf"}
+
+@api_router.get("/legality/docs")
+async def list_legality_docs(scope: str = "unit", blok: Optional[str] = None, _=Depends(current_user)):
+    q: dict = {"scope": scope}
+    if scope == "unit" and blok:
+        q["blok_kavling"] = blok
+    rows = await db.legality_docs.find(q, {"_id": 0}).sort("uploaded_at", -1).to_list(1000)
+    return rows
+
+@api_router.post("/legality/docs")
+async def upload_legality_doc(file: UploadFile = File(...), scope: str = Form("unit"),
+                              blok_kavling: str = Form(""), jenis: str = Form("Lainnya"),
+                              catatan: str = Form(""),
+                              user=Depends(require_roles("admin_utama", "admin_legal"))):
+    if scope not in ("unit", "project"):
+        raise HTTPException(400, "scope harus unit/project")
+    if scope == "unit" and not blok_kavling:
+        raise HTTPException(400, "blok_kavling wajib diisi")
+    content = await file.read()
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(400, "Ukuran file maksimal 15 MB")
+    ext = (file.filename or "jpg").rsplit(".", 1)[-1].lower()
+    if ext not in LEGAL_DOC_EXT:
+        raise HTTPException(400, "Format file harus JPG/PNG/WEBP/PDF")
+    path = f"{APP_NAME}/legal/{scope}/{blok_kavling or 'proyek'}/{uuid.uuid4()}.{ext}"
+    content_type = file.content_type or ("application/pdf" if ext == "pdf" else f"image/{ext}")
+    try:
+        await run_in_threadpool(_put_object_sync, path, content, content_type)
+    except Exception as e:
+        logger.exception("Upload dokumen legalitas gagal")
+        raise HTTPException(500, f"Upload gagal: {e}")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "scope": scope,
+        "blok_kavling": blok_kavling if scope == "unit" else None,
+        "jenis": jenis or "Lainnya",
+        "catatan": catatan or "",
+        "nama_file": file.filename or f"dokumen.{ext}",
+        "path": path,
+        "content_type": content_type,
+        "ukuran": len(content),
+        "uploaded_by": user["username"],
+        "uploaded_name": user.get("name", user["username"]),
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.legality_docs.insert_one(dict(doc))
+    return doc
+
+@api_router.delete("/legality/docs/{doc_id}")
+async def delete_legality_doc(doc_id: str, _=Depends(require_roles("admin_utama", "admin_legal"))):
+    res = await db.legality_docs.delete_one({"id": doc_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Dokumen tidak ditemukan")
+    return {"ok": True}
+
 # ============== Dashboard ==============
 @api_router.get("/dashboard")
 async def dashboard(month: Optional[str] = None, marketing: Optional[str] = None,
                       _=Depends(current_user)):
+    data = await build_dashboard_data(month, marketing)
+    data.pop("kpr_rows", None)
+    data.pop("units", None)
+    data.pop("legality", None)
+    return data
+
+async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[str] = None) -> dict:
     kpr_rows = await db.kpr.find({}, {"_id": 0}).to_list(2000)
     units = await db.units.find({}, {"_id": 0}).to_list(2000)
     legality = await db.legality_unit.find({}, {"_id": 0}).to_list(2000)
@@ -690,7 +903,7 @@ async def dashboard(month: Optional[str] = None, marketing: Optional[str] = None
             g["sp3k_done"] += 1
 
     # Unit summary
-    used_bloks = {r["blok_kavling"] for r in kpr_rows}
+    used_bloks = {r["blok_kavling"] for r in kpr_rows if r.get("status") != "DIPUTIHKAN"}
     unit_summary = {
         "total": len(units),
         "belum_mulai": sum(1 for u in units if u["status_bangunan"] == "BELUM MULAI"),
@@ -725,7 +938,65 @@ async def dashboard(month: Optional[str] = None, marketing: Optional[str] = None
         "by_bank": list(by_bank.values()),
         "unit_summary": unit_summary,
         "legal_summary": legal_summary,
+        "kpr_rows": filtered,
+        "units": units,
+        "legality": legality,
     }
+
+# ============== Laporan / Export ==============
+def _decode_query_token(token: Optional[str],
+                        credentials: Optional[HTTPAuthorizationCredentials]) -> str:
+    jwt_token = None
+    if credentials and credentials.scheme.lower() == "bearer":
+        jwt_token = credentials.credentials
+    elif token:
+        jwt_token = token
+    if not jwt_token:
+        raise HTTPException(401, "Auth required")
+    try:
+        return jwt.decode(jwt_token, JWT_SECRET, algorithms=[JWT_ALG])["sub"]
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
+REPORT_SECTIONS_BY_ROLE = {
+    "admin_utama": ("kpr", "unit", "legal"),
+    "admin_kpr": ("kpr",),
+    "marketing": ("kpr",),
+    "admin_bangunan": ("unit",),
+    "admin_legal": ("legal",),
+}
+
+@api_router.get("/reports/monthly")
+async def monthly_report(month: Optional[str] = None, marketing: Optional[str] = None,
+                         format: str = "xlsx", token: Optional[str] = Query(None),
+                         credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer)] = None):
+    username = _decode_query_token(token, credentials)
+    user = await db.users.find_one({"username": username}, {"_id": 0, "password_hash": 0})
+    if not user or not user.get("active", False):
+        raise HTTPException(401, "Invalid token")
+    sections = REPORT_SECTIONS_BY_ROLE.get(user["role"], ())
+    if user["role"] == "marketing":
+        marketing = user.get("marketing_name") or "-"
+    data = await build_dashboard_data(month, marketing)
+    info = await db.config.find_one({"key": "project_info"}) or {}
+    ctx = {
+        "project_name": (info.get("value") or {}).get("project_name", "Mahkota Graha Subang"),
+        "company_name": (info.get("value") or {}).get("company_name", "PT Lider Bahtera Toolsindo"),
+        "month": month, "marketing": marketing,
+        "sections": sections,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_by": user.get("name", username),
+        **data,
+    }
+    label = f"laporan-{'-'.join(sections) or 'kpr'}-{month or 'semua'}" + (f"-{marketing}" if marketing else "")
+    if format == "pdf":
+        content = await run_in_threadpool(reports.build_pdf, ctx)
+        media, ext = "application/pdf", "pdf"
+    else:
+        content = await run_in_threadpool(reports.build_xlsx, ctx)
+        media, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    return Response(content=content, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{label}.{ext}"'})
 
 @api_router.get("/dashboard/combined-table")
 async def combined_table(_=Depends(current_user)):
@@ -737,7 +1008,10 @@ async def combined_table(_=Depends(current_user)):
     kpr_by_blok = {}
     for r in kpr:
         await compute_kpr_status(r)
-        kpr_by_blok[r["blok_kavling"]] = r
+        prev = kpr_by_blok.get(r["blok_kavling"])
+        # utamakan berkas aktif; berkas DIPUTIHKAN hanya tampil jika tidak ada yang aktif
+        if prev is None or (prev["status"] == "DIPUTIHKAN" and r["status"] != "DIPUTIHKAN"):
+            kpr_by_blok[r["blok_kavling"]] = r
     legal_by_blok = {l["blok_kavling"]: l for l in legality}
 
     out = []
@@ -748,7 +1022,7 @@ async def combined_table(_=Depends(current_user)):
         out.append({
             "blok_kavling": u["blok_kavling"],
             "nama_konsumen": k.get("nama_konsumen") if k else None,
-            "status_kpr": k.get("status") if k else "TERSEDIA" if u["persen_progres"] > 0 else "BELUM SIAP",
+            "status_kpr": k.get("status") if (k and k.get("status") != "DIPUTIHKAN") else "TERSEDIA" if u["persen_progres"] > 0 else "BELUM SIAP",
             "tahap_konstruksi": u.get("tahap_konstruksi"),
             "persen_progres": u.get("persen_progres"),
             "status_bangunan": u.get("status_bangunan"),

@@ -101,3 +101,40 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+## Iteration 2 - Fitur baru (Juni 2026)
+user_problem_statement: Tema biru, role marketing freelance (edit hanya berkas sendiri), riwayat perubahan KPR, foto timeline bangunan, filter dashboard bulan+marketing, export laporan Excel/PDF, tab Legalitas + upload/download dokumen scan.
+backend:
+  - task: "Role marketing + scope berkas sendiri (POST/PUT/DELETE /api/kpr)"
+    implemented: true
+    working: true  # smoke test /app/backend/tests/smoke_new_features.py passed
+  - task: "Riwayat perubahan GET /api/kpr/{id}/history"
+    implemented: true
+    working: true
+  - task: "Foto timeline GET/DELETE /api/units/{blok}/photos, POST photo w/ catatan"
+    implemented: true
+    working: "NA"  # upload needs real file via UI; list tested
+  - task: "Laporan GET /api/reports/monthly?format=xlsx|pdf&month&marketing"
+    implemented: true
+    working: true
+  - task: "Dokumen legalitas GET/POST/DELETE /api/legality/docs, download /api/files/{path}?download="
+    implemented: true
+    working: true
+frontend:
+  - task: "Tema biru (theme.ts, gradient login/dashboard)"
+    implemented: true
+    working: "NA"
+  - task: "Dashboard filter bulan/marketing + tombol Excel/PDF"
+    implemented: true
+    working: "NA"
+  - task: "KPR: tombol Riwayat (modal), marketing lock field, Hanya lihat untuk berkas marketing lain"
+    implemented: true
+    working: "NA"
+  - task: "Bangunan: galeri timeline foto + catatan"
+    implemented: true
+    working: "NA"
+  - task: "Tab Legalitas baru + LegalDocs upload/download"
+    implemented: true
+    working: "NA"
+  - task: "Kelola User: role Marketing + pilih nama marketing"
+    implemented: true
+    working: "NA"

@@ -2,12 +2,8 @@ import { Tabs } from "expo-router";
 import Icon from "@react-native-vector-icons/ionicons";
 import { Platform } from "react-native";
 import { colors } from "@/src/theme";
-import { useAuth } from "@/src/auth-context";
 
 export default function TabsLayout() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin_utama";
-
   return (
     <Tabs
       screenOptions={{
@@ -42,6 +38,13 @@ export default function TabsLayout() {
         options={{
           title: "Bangunan",
           tabBarIcon: ({ color, size }) => <Icon name="construct" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="legalitas"
+        options={{
+          title: "Legalitas",
+          tabBarIcon: ({ color, size }) => <Icon name="shield-checkmark" size={size} color={color} />,
         }}
       />
       <Tabs.Screen

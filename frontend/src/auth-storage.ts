@@ -47,4 +47,9 @@ export const auth = {
   clearUser: () => remove(KEY_USER),
 };
 
-export type User = { username: string; name: string; role: "admin_utama" | "admin_kpr" | "admin_legal" | "admin_bangunan" };
+export type User = {
+  username: string;
+  name: string;
+  role: "admin_utama" | "admin_kpr" | "admin_legal" | "admin_bangunan" | "marketing";
+  marketing_name?: string | null;
+};

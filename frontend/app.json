@@ -11,8 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.emergent.bangunpantau.ss2l10",
       "infoPlist": {
-        "NSCameraUsageDescription": "Ambil foto progres bangunan di lapangan",
-        "NSPhotoLibraryUsageDescription": "Pilih foto dokumentasi dari galeri"
+        "NSCameraUsageDescription": "Foto progres bangunan dan scan dokumen legalitas",
+        "NSPhotoLibraryUsageDescription": "Pilih foto dokumentasi dan dokumen dari galeri"
       }
     },
     "android": {
@@ -21,7 +21,10 @@
         "backgroundColor": "#000000"
       },
       "package": "com.emergent.bangunpantau.ss2l10",
-      "permissions": ["android.permission.CAMERA", "android.permission.READ_EXTERNAL_STORAGE"]
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -46,13 +49,18 @@
       "expo-status-bar",
       [
         "expo-camera",
-        { "cameraPermission": "Ambil foto progres bangunan di lapangan" }
+        {
+          "cameraPermission": "Ambil foto progres bangunan di lapangan"
+        }
       ],
       [
         "expo-image-picker",
-        { "photosPermission": "Pilih foto dokumentasi dari galeri" }
+        {
+          "photosPermission": "Pilih foto dokumentasi dari galeri"
+        }
       ],
-      "@react-native-vector-icons/ionicons"
+      "@react-native-vector-icons/ionicons",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

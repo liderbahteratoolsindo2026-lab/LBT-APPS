@@ -1,0 +1,100 @@
+import React, { useState } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import Icon from "@react-native-vector-icons/ionicons";
+import { api } from "@/src/api";
+import { colors, spacing, radius } from "@/src/theme";
+
+const ROLES = [
+  { value: "admin_utama", label: "Admin Utama" },
+  { value: "admin_kpr", label: "Admin KPR" },
+  { value: "admin_legal", label: "Admin Legal" },
+  { value: "admin_bangunan", label: "Admin Bangunan" },
+];
+
+export default function Users() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const qc = useQueryClient();
+  const { data = [] } = useQuery({ queryKey: ["users"], queryFn: () => api.listUsers() });
+  const [form, setForm] = useState({ username: "", password: "", name: "", role: "admin_kpr" });
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const create = async () => {
+    setErr(null); setSaving(true);
+    try {
+      await api.createUser(form);
+      setForm({ username: "", password: "", name: "", role: "admin_kpr" });
+      qc.invalidateQueries({ queryKey: ["users"] });
+    } catch (e: any) { setErr(e?.message || "Gagal"); }
+    finally { setSaving(false); }
+  };
+  const del = async (u: string) => { await api.deleteUser(u); qc.invalidateQueries({ queryKey: ["users"] }); };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
+      <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+          <Pressable onPress={() => router.back()} hitSlop={8}><Icon name="chevron-back" size={24} color={colors.onSurface} /></Pressable>
+          <Text style={styles.h1}>Kelola User</Text>
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Tambah User</Text>
+          <TextInput placeholder="Username" placeholderTextColor={colors.muted} value={form.username} onChangeText={(v) => setForm({ ...form, username: v })} style={styles.input} />
+          <TextInput placeholder="Nama Lengkap" placeholderTextColor={colors.muted} value={form.name} onChangeText={(v) => setForm({ ...form, name: v })} style={styles.input} />
+          <TextInput placeholder="Password" placeholderTextColor={colors.muted} value={form.password} onChangeText={(v) => setForm({ ...form, password: v })} secureTextEntry style={styles.input} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }}>
+            {ROLES.map((r) => (
+              <Pressable key={r.value} onPress={() => setForm({ ...form, role: r.value })}
+                style={[styles.chip, { flexShrink: 0 }, form.role === r.value && styles.chipActive]}>
+                <Text style={[styles.chipText, form.role === r.value && styles.chipTextActive]}>{r.label}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          {err && <Text style={{ color: colors.error, fontSize: 12 }}>{err}</Text>}
+          <Pressable testID="create-user-btn" onPress={create} disabled={saving} style={[styles.saveBtn, saving && { opacity: 0.6 }]}>
+            {saving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Tambah User</Text>}
+          </Pressable>
+        </View>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Daftar User ({data.length})</Text>
+          {data.map((u: any) => (
+            <View key={u.username} style={styles.userRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.userName}>{u.name}</Text>
+                <Text style={styles.userSub}>@{u.username} · {ROLES.find((r) => r.value === u.role)?.label}</Text>
+              </View>
+              {u.username !== "admin" && (
+                <Pressable onPress={() => del(u.username)} hitSlop={8}>
+                  <Icon name="trash" size={18} color={colors.error} />
+                </Pressable>
+              )}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  header: { backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  h1: { fontSize: 22, fontWeight: "800", color: colors.onSurface },
+  card: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
+  cardTitle: { fontSize: 16, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
+  input: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm, paddingHorizontal: spacing.md, paddingVertical: 10, fontSize: 14, color: colors.onSurface, borderWidth: 1, borderColor: colors.border, outlineWidth: 0 as any },
+  chip: { paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  chipText: { fontSize: 12, color: colors.onSurface, fontWeight: "600" },
+  chipTextActive: { color: colors.onBrandPrimary },
+  saveBtn: { backgroundColor: colors.brandPrimary, height: 44, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  saveBtnText: { color: colors.onBrandPrimary, fontSize: 14, fontWeight: "700" },
+  userRow: { flexDirection: "row", alignItems: "center", paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider },
+  userName: { fontSize: 14, fontWeight: "700", color: colors.onSurface },
+  userSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
+});

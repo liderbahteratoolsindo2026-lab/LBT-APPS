@@ -1,0 +1,165 @@
+{
+  "app_name": "LiderPro",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A highly readable, structured, and trustworthy operational dashboard where data clarity and status visibility are the absolute priorities.",
+  "color": {
+    "surface": "#FFFFFF",
+    "onSurface": "#18181B",
+    "surfaceSecondary": "#F4F4F5",
+    "onSurfaceSecondary": "#27272A",
+    "surfaceTertiary": "#E4E4E7",
+    "onSurfaceTertiary": "#3F3F46",
+    "surfaceInverse": "#18181B",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#0F3E3A",
+    "brandPrimary": "#134E4A",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#F0FDF4",
+    "onBrandSecondary": "#14532D",
+    "brandTertiary": "#E0F2FE",
+    "onBrandTertiary": "#0C4A6E",
+    "success": "#16A34A",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D97706",
+    "onWarning": "#FFFFFF",
+    "error": "#DC2626",
+    "onError": "#FFFFFF",
+    "border": "#E4E4E7",
+    "borderStrong": "#D4D4D8",
+    "divider": "#F4F4F5",
+    "muted": "#71717A",
+    "onBrand": "#FFFFFF"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room for forms and lists. Touch targets must be 44pt+. Strict alignment for data tables.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use glass on bottom tab bar, floating action buttons, and sticky sticky headers over scrolling content"
+    ],
+    "dont's": [
+      "Do not use glass on data table rows, form inputs, or standard list cards"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Dashboard",
+      "purpose": "A high-level view showing critical KPIs, unit progress charts, and urgent alerts (pemutihan deadlines) to keep admins informed.",
+      "states": {
+        "loading": "Skeleton UI for KPI grid and charts.",
+        "empty": "No data available for selected filter month/marketing. Clear filter CTA.",
+        "error": "Failed to load dashboard data. Retry CTA."
+      },
+      "layout": "Vertical scroll. Top section: Hero background image with a gradient overlay (scrim), displaying the Project Name and user role. Below hero: A 2x2 grid of KPI cards (Total, In Progress, SP3K, Done) using solid colors or distinct borders. Below KPIs: Horizontal scrollable filter pills (Month, Marketing). Main content: Stacked list or charts for Marketing/Unit stats and an 'Attention Required' section for nearing deadlines."
+    },
+    {
+      "name": "Berkas KPR",
+      "purpose": "List and manage consumer mortgage files with clear status indicators.",
+      "states": {
+        "loading": "List skeleton with rounded card placeholders.",
+        "empty": "Minimal illustration of empty desk with 'No KPR files found' text and 'Add New File' CTA.",
+        "error": "Failed to fetch files. Retry CTA."
+      },
+      "layout": "Sticky header with search bar and filter button. Main content: Stacked cards. Each card displays Consumer Name (large), Bank & Marketing (muted), and a prominent colored status badge (Red/Amber/Green) anchored to the top right. FAB (Floating Action Button) anchored to bottom right for 'Add File'."
+    },
+    {
+      "name": "Progres Bangunan",
+      "purpose": "Track unit construction progress and upload site photos.",
+      "states": {
+        "loading": "Spinner centered.",
+        "empty": "No units assigned or found.",
+        "error": "Error loading units."
+      },
+      "layout": "List of units with progress bars (0-100%). Tapping a unit opens a Bottom Sheet (or detail screen) featuring a large camera/upload placeholder taking up 40% of the screen, followed by a form to update the construction milestone. A sticky primary 'Save Progress' CTA at the bottom."
+    },
+    {
+      "name": "Legalitas",
+      "purpose": "Manage legality status of documents per unit and for the project.",
+      "states": {
+        "loading": "Skeleton list.",
+        "empty": "No documents found.",
+        "error": "Error loading documents."
+      },
+      "layout": "Segmented control at the top (Unit Legality vs. Project Legality). Below: A clean, dense list of documents. Each row has the document name and a trailing toggle or status dropdown."
+    },
+    {
+      "name": "Pengaturan",
+      "purpose": "Admin settings for managing dropdown values and project info.",
+      "states": {
+        "loading": "Spinner.",
+        "empty": "N/A",
+        "error": "Error loading settings."
+      },
+      "layout": "iOS-native grouped list style. Sections with light gray background, rows with white background and bottom divider. Chevron on the right to indicate drill-down."
+    }
+  ],
+  "images": {
+    "dashboard_hero": {
+      "url": "https://images.unsplash.com/photo-1556156653-e5a7c69cc263?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBob3VzaW5nJTIwY29uc3RydWN0aW9uJTIwc2l0ZSUyMGFlcmlhbHxlbnwwfHx8fDE3OTEwMTAxOTJ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "modern housing construction site aerial"
+    },
+    "empty_state_desk": {
+      "url": "https://images.unsplash.com/photo-1704655295066-681e61ecca6b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwxfHxvZmZpY2UlMjBwYXBlcndvcmslMjBmaWxlcyUyMG1pbmltYWwlMjBvbiUyMGRlc2t8ZW58MHx8fHwxNzkxMDEwMTkyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "office paperwork files minimal on desk"
+    },
+    "empty_state_paper": {
+      "url": "https://images.unsplash.com/photo-1602629978851-125a3b62f3d8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMGxpc3QlMjBtaW5pbWFsJTIwaWxsdXN0cmF0aW9ufGVufDB8fHx8MTc5MTAxMDE5Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "empty list minimal illustration"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette. No blues anywhere (not even for accents or default links). The brand is a deep Pine Green to reflect housing/growth.",
+    "Implement clear status badging on lists using the success/warning/error colors. Make sure contrast ratios are AA compliant.",
+    "Ensure the layout supports large tables/lists without feeling cluttered. Use generous iOS native spacing and clean dividers.",
+    "For the dashboard, use the `dashboard_hero` image at the top with a strong gradient scrim (top-to-bottom, ending in dark gray) so the project title overlay is readable.",
+    "For 'Progres Bangunan' details, prioritize a large, easily tappable photo upload area since field admins will use this frequently on site.",
+    "The App requires role-based rendering (Admin Utama vs KPR/Legal/Bangunan). Mock the auth state robustly and ensure 'Pengaturan' is only visible if the role is Admin Utama.",
+    "Ensure sticky CTAs for form submissions (like 'Save Progress') are placed above the keyboard and safe area on mobile."
+  ],
+  "haptics": {
+    "button_press": "light",
+    "tab_switch": "light",
+    "status_change": "medium",
+    "photo_upload": "success"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "frontend",
+    "slug": "frontend",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "frontend",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.emergent.bangunpantau.ss2l10",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Ambil foto progres bangunan di lapangan",
+        "NSPhotoLibraryUsageDescription": "Pilih foto dokumentasi dari galeri"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "package": "com.emergent.bangunpantau.ss2l10",
+      "permissions": ["android.permission.CAMERA", "android.permission.READ_EXTERNAL_STORAGE"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-image.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#000000"
+        }
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-status-bar",
+      [
+        "expo-camera",
+        { "cameraPermission": "Ambil foto progres bangunan di lapangan" }
+      ],
+      [
+        "expo-image-picker",
+        { "photosPermission": "Pilih foto dokumentasi dari galeri" }
+      ],
+      "@react-native-vector-icons/ionicons"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

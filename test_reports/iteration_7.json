@@ -1,0 +1,35 @@
+{
+  "summary": "BUG FIX VERIFIED: filter bulan di Dashboard sekarang berfungsi. Backend 9/9 pytest hijau (test_iteration7_dashfilter.py). Backend `_kpr_in_month` (server.py:1293-1301) kini cocok ke tanggal_booking/sp3k/akad/pemutihan - verifikasi curl via EXPO_PUBLIC_BACKEND_URL: GET /api/dashboard tanpa month -> kpi.total=25; ?month=2026-09 -> total=4; ?month=2026-10 -> total>0; ?month=2026-06 -> total=0; ?marketing=ADIT -> total=10; kombinasi ?month=2026-09&marketing=ADIT -> subset dari ADIT (semua row marketing=ADIT). FRONTEND (Expo web, 390x844) admin login: Filter Rekap menampilkan chip 'Sep 2026' (testID month-2026-09) & 'Okt 2026' (testID month-2026-10) karena monthOptions kini dibangun dari tanggal yang ADA di data (dashboard.tsx:48-58), bukan recentMonths. Tap Sep 2026 -> KPI 'Total Berjalan' = 4 (TIDAK kosong). Drill-down KPI Done -> modal 'Berkas Done (Akad)' terbuka. Tap 'Semua Bulan' -> Total Berjalan = 20 (25 - 5 done). Tap marketing ADIT -> 8 berjalan (10 total - 2 done). Reset filter -> kembali 20. Login mkt_adit -> chip Sep 2026 juga hadir (dari data ADIT saja) & KPI = 8 berjalan (SEC-001 scope marketing tetap jalan). Ekspor laporan ?month=2026-09&format=xlsx -> 200 dengan content-type spreadsheet. AI /api/ai/chat (claude) tetap balas non-empty. Tidak ada red screen. Hanya warning carry-over: 'shadow*' style props deprecated (RN Web, non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "RN Web styles (carried-over)",
+       "issue": "Warning '\"shadow*\" style props are deprecated. Use \"boxShadow\"'. Non-blocking, dari iter4+."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7_dashfilter.py",
+    "/app/test_reports/pytest/iter7_results.xml"
+  ],
+  "action_items": [
+    "(Low, carried) Migrasi shadow* style props ke boxShadow di RN Web styles."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1293-1301 `_kpr_in_month` kini memeriksa tanggal_booking, tanggal_sp3k, tanggal_akad, tanggal_pemutihan. Benar: data hasil import tidak punya tanggal_booking tapi punya tanggal_sp3k/akad di 2026-09/10, sehingga filter bulan sekarang menghasilkan data. Verified: month=2026-09 -> 4, month=2026-10 >0.",
+    "dashboard.tsx:48-58 membangun monthOptions sebagai Set dari tanggal yang benar-benar ada di `kprAllQ.data`, fallback ke recentMonths(6) jika kosong. Hasil disort reverse (terbaru dulu). Konsisten dengan backend. testID per chip = month-YYYY-MM.",
+    "Marketing scoping tetap jalan: /api/dashboard endpoint (server.py:1286-1287) memaksa marketing=marketing_name untuk role 'marketing' SEBELUM build_dashboard_data; kombinasi month+marketing tetap konsisten.",
+    "Reports endpoint ikut menggunakan build_dashboard_data yang sama, sehingga ekspor bulan terpilih juga ikut terfilter dengan benar."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration7_dashfilter.py (baru, 9 kasus: 4 filter bulan + 2 marketing + 1 scope mkt + 1 ekspor + 1 AI)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% (admin filter bulan=4, filter marketing ADIT=8, reset=20, drill-down KPI, mkt_adit scope=8, chip Sep/Okt 2026 hadir dari data)"},
+  "seed_data_creation": "Tidak ada seed baru. DB tetap: 25 KPR, 36 units, 12 legality.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview URL: https://bangun-pantau-1.preview.emergentagent.com. testID baru chip bulan: month-{YYYY-MM} (mis. month-2026-09, month-2026-10) + month-all. Marketing chip: marketing-{nama}, marketing-all. Reset: reset-filter. KPI testID: kpi-Total Berjalan, kpi-Pemberkasan, kpi-Proses, kpi-SP3K, kpi-Done (Akad), kpi-Diputihkan, kpi-Jatuh Tempo, kpi-Perlu Tindak Lanjut. Modal drill-down close: detail-close. Jalankan backend tests: `pytest /app/backend/tests/test_iteration7_dashfilter.py -v -o addopts=`. Data uji: Sep 2026=4 berkas, Okt 2026>0, Jun 2026=0, marketing ADIT=10 (8 berjalan + 2 done).",
+  "rca_of_issue": "BUG: filter bulan dashboard menghasilkan 0 data. ROOT CAUSE: (1) backend `_kpr_in_month` dulu hanya cek tanggal_booking, sedangkan data hasil import Sheets tidak memiliki tanggal_booking (field itu kosong) sehingga setiap filter month selalu False; (2) frontend monthOptions dibangun dari recentMonths(6) yaitu 6 bulan kalender terakhir (Jul-Des 2026) sedangkan data aktivitas SP3K/akad real ada di 2026-09 & 2026-10 - artinya chip-chip 'Jul 2026', 'Agu 2026' dsb ditampilkan tapi memang tidak ada datanya. FIX: (A) backend memperluas pengecekan ke tanggal_booking/sp3k/akad/pemutihan (server.py:1297); (B) frontend membangun monthOptions dari Set tanggal-tanggal yang ada di data KPR (dashboard.tsx:48-58) sehingga chip bulan sinkron dengan data. VERIFIED end-to-end: admin tap Sep 2026 -> Total Berjalan=4, mkt_adit tap Sep 2026 -> subset ADIT. Tidak ada perubahan kode yang diperlukan dari testing agent."
+}

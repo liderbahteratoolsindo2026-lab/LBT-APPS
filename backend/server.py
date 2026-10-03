@@ -1290,6 +1290,16 @@ async def dashboard(month: Optional[str] = None, marketing: Optional[str] = None
     data.pop("legality", None)
     return data
 
+def _kpr_in_month(r: dict, month: str) -> bool:
+    """Berkas dianggap masuk 'bulan' bila ada aktivitas tanggal (booking/SP3K/akad) di bulan itu."""
+    if not month:
+        return True
+    for f in ("tanggal_booking", "tanggal_sp3k", "tanggal_akad", "tanggal_pemutihan"):
+        v = (r.get(f) or "")
+        if isinstance(v, str) and v[:7] == month:
+            return True
+    return False
+
 async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[str] = None,
                                project_id: Optional[str] = None) -> dict:
     pq = {"project_id": project_id} if project_id else {}
@@ -1301,9 +1311,8 @@ async def build_dashboard_data(month: Optional[str] = None, marketing: Optional[
     filtered = []
     for r in kpr_rows:
         await compute_kpr_status(r)
-        if month:
-            if not (r.get("tanggal_booking") or "").startswith(month):
-                continue
+        if month and not _kpr_in_month(r, month):
+            continue
         if marketing and r.get("marketing") != marketing:
             continue
         filtered.append(r)
@@ -1545,7 +1554,7 @@ async def marketing_dashboard(month: Optional[str] = None, marketing: Optional[s
         "diputihkan": sum(1 for r in mine if r["status"] == "DIPUTIHKAN"),
         "segera_diputihkan": len(nearing),
         "macet": len(macet_list),
-        "bulan_ini": sum(1 for r in mine if (r.get("tanggal_booking") or "").startswith(now_month)),
+        "bulan_ini": sum(1 for r in mine if _kpr_in_month(r, now_month)),
         "target": target, "month": now_month,
         "nearing": nearing, "macet_list": macet_list,
     }

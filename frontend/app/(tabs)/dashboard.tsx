@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Modal } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,8 +10,6 @@ import { useAuth, roleLabel } from "@/src/auth-context";
 import { useProject } from "@/src/project-context";
 import { colors, spacing, radius, heroGradient } from "@/src/theme";
 import { downloadReport, monthLabel, recentMonths } from "@/src/report-utils";
-
-const MONTHS = recentMonths(12);
 
 function reportScopeLabel(role?: string) {
   switch (role) {
@@ -46,6 +44,18 @@ export default function Dashboard() {
     queryFn: () => api.getConfig("project_info"),
   });
   const marketingQ = useQuery({ queryKey: ["list", "marketing"], queryFn: () => api.getList("marketing") });
+  const kprAllQ = useQuery({ queryKey: ["kpr", activeId], queryFn: () => api.listKpr() });
+  const monthOptions = useMemo(() => {
+    const set = new Set<string>();
+    (kprAllQ.data || []).forEach((r: any) => {
+      ["tanggal_booking", "tanggal_sp3k", "tanggal_akad", "tanggal_pemutihan"].forEach((f) => {
+        const v = r[f];
+        if (typeof v === "string" && v.length >= 7) set.add(v.slice(0, 7));
+      });
+    });
+    const arr = Array.from(set).sort().reverse();
+    return arr.length ? arr : recentMonths(6);
+  }, [kprAllQ.data]);
 
   const projectName = activeProject?.name || projectInfoQ.data?.value?.project_name || "Mahkota Graha I";
   const companyName = activeProject?.company_name || projectInfoQ.data?.value?.company_name || "PT Lider Bahtera Toolsindo";
@@ -159,7 +169,7 @@ export default function Dashboard() {
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
             <Chip label="Semua Bulan" active={!month} onPress={() => setMonth("")} testID="month-all" />
-            {MONTHS.map((m) => (
+            {monthOptions.map((m) => (
               <Chip key={m} label={monthLabel(m)} active={month === m} onPress={() => setMonth(m)} testID={`month-${m}`} />
             ))}
           </ScrollView>

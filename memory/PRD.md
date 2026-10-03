@@ -87,3 +87,8 @@ Full-stack mobile (Expo) + web application for monitoring KPR subsidized housing
 - Lockout login: 5x gagal -> akun terkunci 15 menit (429), reset counter saat login sukses / admin reset. Disimpan di field user failed_login_attempts & locked_until. Pesan generik + hint sisa percobaan.
 
 ## Status: Iterasi 6 Complete
+
+## Iterasi 7 (Juni 2026) - Bug fix: Filter bulan Dashboard (terverifikasi 9/9 + E2E)
+- Masalah: pilih bulan di Dashboard selalu kosong. Penyebab: (1) filter hanya cek tanggal_booking yang KOSONG pada data import; (2) chip bulan dibuat dari bulan kalender terkini, tak cocok dgn tanggal data (SP3K/akad ada di 2026-09 & 2026-10).
+- Fix backend: helper _kpr_in_month mencocokkan booking/SP3K/akad/pemutihan; dipakai di build_dashboard_data & marketing_dashboard (bulan_ini).
+- Fix frontend: opsi bulan (monthOptions) dibangun dari tanggal yang benar-benar ada di data KPR (via api.listKpr), fallback recentMonths bila kosong.
